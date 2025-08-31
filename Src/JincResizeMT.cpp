@@ -613,7 +613,8 @@ static bool generate_coeff_table_c(const generate_coeff_params &params)
                         const double dx = (clamp(is_border ? xpos : quantized_xpos, 0.f, static_cast<float>(src_width - 1)) - window_x) * filter_step_x;
                         const double dy = (clamp(is_border ? ypos : quantized_ypos, 0.f, static_cast<float>(src_height - 1)) - window_y) * filter_step_y;
 
-                        int index = static_cast<int>(round((samples - 1) * (dx * dx + dy * dy) / radius2 + DOUBLE_ROUND_MAGIC_NUMBER));
+                        //int index = static_cast<int>(llround((samples - 1) * (dx * dx + dy * dy) / radius2 + DOUBLE_ROUND_MAGIC_NUMBER));
+						int index = static_cast<int>(round((samples - 1) * (dx * dx + dy * dy) / radius2));
 
                         const float factor = func->GetFactor(index);
 
