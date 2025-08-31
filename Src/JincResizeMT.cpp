@@ -293,7 +293,7 @@ static double bessel_j1(double x)
 
     double x2 = (x * x) / 4.0;
 
-    int m=1;
+    unsigned long m=1;
 	while ((std::fabs(term) >= EPS) && (m<MAX_TERMS))
 	{
 		term *= -x2 / (m * (m + 1)); // récurrence
