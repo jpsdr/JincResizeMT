@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "JincRessizeMT.h"
+#include "resize_plane_sse41.h"
 
 // VS 2015
 #if _MSC_VER >= 1900
@@ -735,6 +736,14 @@ void JincResize::FreeData(void)
 JincResize::JincResize(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height, int quant_x, int quant_y, int tap, double blur, int opt, IScriptEnvironment* env)
     : GenericVideoFilter(_child), w(target_width), h(target_height), _opt(opt), init_lut(nullptr), has_at_least_v8(false), has_at_least_v11(false), avx512(false), avx2(false), sse41(false), subsampled(false)
 {
+    has_at_least_v8 = true;
+    try { env->CheckVersion(8); }
+    catch (const AvisynthError&) { has_at_least_v8 = false; };
+
+    has_at_least_v11 = true;
+    try { env->CheckVersion(11); }
+    catch (const AvisynthError&) { has_at_least_v11 = false; };
+
     if (!vi.IsPlanar())
         env->ThrowError("JincResizeMT: clip must be in planar format.");
 
@@ -748,27 +757,19 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
         env->ThrowError("JincResizeMT: quant_y must be between 1..256.");
 
     if ((_opt > 3) || (_opt < -1))
-        env->ThrowError("JincResizeMT: opt must be between -1..3 is not allowed.");
+        env->ThrowError("JincResizeMT: opt must be between -1..3.");
 
     if (blur < 0.0 || blur > 10.0)
         env->ThrowError("JincResizeMT: blur must be between 0.0..10.0.");
 
-    if (!(env->GetCPUFlags() & CPUF_AVX512F) && _opt == 3)
-        env->ThrowError("JincResizeMT: opt=2 requires AVX-512F.");
+	if ((!(env->GetCPUFlags() & CPUF_AVX512F) || !has_at_least_v8) && (_opt == 3))
+		env->ThrowError("JincResizeMT: opt=3 requires AVX-512F and AVS+.");
 
-    if (!(env->GetCPUFlags() & CPUF_AVX2) && _opt == 2)
-        env->ThrowError("JincResizeMT: opt=2 requires AVX2.");
+	if ((!(env->GetCPUFlags() & CPUF_AVX2) || !has_at_least_v8) && (_opt == 2))
+        env->ThrowError("JincResizeMT: opt=2 requires AVX2 and AVS+.");
 
-    if (!(env->GetCPUFlags() & CPUF_SSE4_1) && _opt == 1)
+    if (!(env->GetCPUFlags() & CPUF_SSE4_1) && (_opt == 1))
         env->ThrowError("JincResizeMT: opt=1 requires SSE4.1.");
-
-    has_at_least_v8 = true;
-    try { env->CheckVersion(8); }
-    catch (const AvisynthError&) { has_at_least_v8 = false; };
-
-    has_at_least_v11 = true;
-    try { env->CheckVersion(11); }
-    catch (const AvisynthError&) { has_at_least_v11 = false; };
 
     int src_width = vi.width;
     int src_height = vi.height;
@@ -888,9 +889,9 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 		}
 	}
 
-    avx512 = (!!(env->GetCPUFlags() & CPUF_AVX512F) && _opt < 0) || _opt == 3;
-    avx2 = (!!(env->GetCPUFlags() & CPUF_AVX2) && _opt < 0) || _opt == 2;
-    sse41 = (!!(env->GetCPUFlags() & CPUF_SSE4_1) && _opt < 0) || _opt == 1;
+	avx512 = (!!(env->GetCPUFlags() & CPUF_AVX512F) && (_opt < 0) && has_at_least_v8) || (_opt == 3);
+    avx2 = (!!(env->GetCPUFlags() & CPUF_AVX2) && (_opt < 0) && has_at_least_v8) || (_opt == 2);
+    sse41 = (!!(env->GetCPUFlags() & CPUF_SSE4_1) && (_opt < 0)) || (_opt == 1);
 	
 	for (unsigned char i=0; i<4; i++)
 	{
@@ -901,34 +902,43 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 	threads_number = 1;
 	threads = 1;
 
-/*
+
     if (vi.ComponentSize() == 1)
     {
-        if (avx512)
+/*        if (avx512)
             process_frame = resize_plane_avx512<uint8_t>;
         else if (avx2)
             process_frame = resize_plane_avx2<uint8_t>;
-        else
-            process_frame = resize_plane_sse41<uint8_t>;
+        else*/
+            if (sse41)
+				process_frame = resize_plane_sse41<uint8_t>;
+			else
+				process_frame = resize_plane_c<uint8_t>;
     }
     else if (vi.ComponentSize() == 2)
     {
-        if (avx512)
+/*        if (avx512)
             process_frame = resize_plane_avx512<uint16_t>;
         else if (avx2)
             process_frame = resize_plane_avx2<uint16_t>;
-        else
-            process_frame = resize_plane_sse41<uint16_t>;
+        else*/
+            if (sse41)
+				process_frame = resize_plane_sse41<uint16_t>;
+			else
+				process_frame = resize_plane_c<uint16_t>;
      }
     else
     {
-        if (avx512)
+/*        if (avx512)
             process_frame = resize_plane_avx512<float>;
         else if (avx2)
             process_frame = resize_plane_avx2<float>;
-        else
-            process_frame = resize_plane_sse41<float>;
-    }*/
+        else*/
+            if (sse41)
+				process_frame = resize_plane_sse41<float>;
+			else
+				process_frame = resize_plane_c<float>;
+    }
 }
 
 JincResize::~JincResize()
@@ -968,8 +978,11 @@ PVideoFrame JincResize::GetFrame(int n, IScriptEnvironment* env)
 			else i_coeff = 0;
 		}
 		else i_coeff = 0;
+
+		process_frame(out[i_coeff],srcp,dstp,dst_width,dst_height,src_stride,dst_stride,ValMin[i],ValMax[i]);
 		
-//        if (!sse41 && !avx2 && !avx512)
+/*
+		if (!sse41 && !avx2 && !avx512)
         {
             if (vi.ComponentSize() == 1)
                 resize_plane_c<uint8_t>(out[i_coeff],srcp,dstp,dst_width,dst_height,src_stride,dst_stride,ValMin[i],ValMax[i]);
@@ -978,8 +991,8 @@ PVideoFrame JincResize::GetFrame(int n, IScriptEnvironment* env)
             else
                 resize_plane_c<float>(out[i_coeff],srcp,dstp,dst_width,dst_height,src_stride,dst_stride,ValMin[i],ValMax[i]);
         }
-  //      else
-    //        process_frame(out[i], srcp, dstp, dst_width, dst_height, src_stride, dst_stride);
+        else
+            process_frame(out[i], srcp, dstp, dst_width, dst_height, src_stride, dst_stride);*/
     }
 
     return dst;

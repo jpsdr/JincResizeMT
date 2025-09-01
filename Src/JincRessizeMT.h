@@ -86,7 +86,8 @@ class JincResize : public GenericVideoFilter
 	bool subsampled;
     float ValMin[4],ValMax[4];
 
-    void(*process_frame)(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch);
+    void(*process_frame)(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch,
+		const float ValMin, const float ValMax);
 
 	Public_MT_Data_Thread MT_Thread[MAX_MT_THREADS];
 	MT_Data_Info_JincResizeMT MT_Data[MAX_MT_THREADS];

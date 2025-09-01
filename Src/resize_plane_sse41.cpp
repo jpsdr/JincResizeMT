@@ -2,6 +2,7 @@
 
 #include "JincRessizeMT.h"
 
+/*
 template <typename T>
 static __forceinline __m128i convert(const __m128i& x)
 {
@@ -25,9 +26,10 @@ __forceinline __m128i pack<uint16_t>(const __m128i& x, const __m128i& y)
 {
     return _mm_packus_epi32(x, y);
 }
-
+*/
 template <typename T>
-void resize_plane_sse41(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch)
+void resize_plane_sse41(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch,
+	const float ValMin, const float ValMax)
 {
     EWAPixelCoeffMeta* meta = coeff->meta;
 
@@ -37,71 +39,86 @@ void resize_plane_sse41(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRIC
     src_pitch /= sizeof(T);
     dst_pitch /= sizeof(T);
 
-    //  assert(fitler_size == coeff->filter_size);
+	const T val_min = static_cast<T>(ValMin);
+	const T val_max = static_cast<T>(ValMax);
+	const __m128 min_val = _mm_set_ps1(ValMin);
+	
+	EWAPixelCoeffMeta *meta_y = coeff->meta;
 
     for (int y = 0; y < dst_height; y++)
     {
+		EWAPixelCoeffMeta *meta = meta_y;
+		
         for (int x = 0; x < dst_width; x++)
         {
-            const T* src_ptr = src + (meta->start_y * static_cast<int64_t>(src_pitch)) + meta->start_x;
-            const float* coeff_ptr = coeff->factor + meta->coeff_meta;            
+            //EWAPixelCoeffMeta* meta = coeff->meta + static_cast<int64_t>(y) * dst_width + x;
+			const T *src_ptr = src + (meta->start_y * static_cast<int64_t>(src_pitch)) + meta->start_x;
+            const float* coeff_ptr = coeff->factor + meta->coeff_meta; 
+			__m128 result = _mm_setzero_ps();			
 
-            if (!(std::is_same_v<T, float>))
+            if (std::is_same<T, uint8_t>::value)
             {
-                __m128 result = _mm_setzero_ps();
-
-                for (int ly = 0; ly < coeff->filter_size; ly++)
+                for (int ly = 0; ly < coeff->filter_size; ++ly)
                 {
                     for (int lx = 0; lx < coeff->filter_size; lx += 4)
                     {
-                        __m128i src_epi64 = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(src_ptr + lx));
-
-                        __m128 src_ps = _mm_cvtepi32_ps(convert<T>(src_epi64));
-                        __m128 coeff = _mm_load_ps(coeff_ptr + lx);
-
+                        const __m128 src_ps = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_cvtsi32_si128(*(reinterpret_cast<const int32_t*>(src_ptr + lx)))));
+                        const __m128 coeff = _mm_load_ps(coeff_ptr + lx);
                         result = _mm_add_ps(result, _mm_mul_ps(src_ps, coeff));
                     }
+
                     coeff_ptr += coeff->coeff_stride;
                     src_ptr += src_pitch;
                 }
 
-                __m128 lo_sum = _mm_hadd_ps(_mm_hadd_ps(result, result), _mm_hadd_ps(result, result));
+                const __m128 hsum = _mm_hadd_ps(_mm_hadd_ps(result, result), _mm_hadd_ps(result, result));
+				const T final_res = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum), _mm_setzero_si128()), _mm_setzero_si128()));
+                dst[x] = clamp(final_res,val_min,val_max);
+            }
+            else if (std::is_same<T, uint16_t>::value)
+            {
+                for (int ly = 0; ly < coeff->filter_size; ++ly)
+                {
+                    for (int lx = 0; lx < coeff->filter_size; lx += 4)
+                    {
+                        const __m128 src_ps = _mm_cvtepi32_ps(_mm_cvtepu16_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i*>(src_ptr + lx))));
+                        const __m128 coeff = _mm_load_ps(coeff_ptr + lx);
+                        result = _mm_add_ps(result, _mm_mul_ps(src_ps, coeff));
+                    }
 
-                // Convert back to interger + round + Save data
-                dst[x] = _mm_cvtsi128_si32(pack<T>(_mm_cvtps_epi32(lo_sum), _mm_setzero_si128()));
+                    coeff_ptr += coeff->coeff_stride;
+                    src_ptr += src_pitch;
+                }
 
-                meta++;
+                const __m128 hsum = _mm_hadd_ps(_mm_hadd_ps(result, result), _mm_hadd_ps(result, result));
+				const T final_res = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum), _mm_setzero_si128()));
+                dst[x] = clamp(final_res,val_min,val_max);
             }
             else
             {
-                __m128 result = _mm_setzero_ps();
-
-                for (int ly = 0; ly < coeff->filter_size; ly++)
+                for (int ly = 0; ly < coeff->filter_size; ++ly)
                 {
                     for (int lx = 0; lx < coeff->filter_size; lx += 4)
                     {
-                        __m128 src_ps = _mm_loadu_ps(reinterpret_cast<const float*>(src_ptr + lx));
-
-                        __m128 coeff = _mm_load_ps(coeff_ptr + lx);
-
+                        const __m128 src_ps = _mm_max_ps(_mm_loadu_ps(reinterpret_cast<const float*>(src_ptr + lx)), min_val);
+                        const __m128 coeff = _mm_load_ps(coeff_ptr + lx);
                         result = _mm_add_ps(result, _mm_mul_ps(src_ps, coeff));
                     }
+
                     coeff_ptr += coeff->coeff_stride;
                     src_ptr += src_pitch;
                 }
 
-                __m128 lo_sum = _mm_hadd_ps(_mm_hadd_ps(result, result), _mm_hadd_ps(result, result));
-
-                // Save data
-                _mm_storeu_ps(reinterpret_cast<float*>(dst + x), lo_sum);
-
-                meta++;
+                dst[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(result, result), _mm_hadd_ps(result, result)));
             }
+			
+			meta++;
         } // for (x)
+		meta_y += dst_width;
         dst += dst_pitch;
     } // for (y)
 }
 
-template void resize_plane_sse41<uint8_t>(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch);
-template void resize_plane_sse41<uint16_t>(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch);
-template void resize_plane_sse41<float>(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch);
+template void resize_plane_sse41<uint8_t>(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch, const float ValMin, const float ValMax);
+template void resize_plane_sse41<uint16_t>(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch, const float ValMin, const float ValMax);
+template void resize_plane_sse41<float>(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch, const float ValMin, const float ValMax);
