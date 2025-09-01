@@ -16,6 +16,19 @@
 #define mydeleteT(ptr) if (ptr!=nullptr) { delete[] ptr; ptr=nullptr;}
 #define mydelete(ptr) if (ptr!=nullptr) { delete ptr; ptr=nullptr;}
 
+// VS 2015
+#if _MSC_VER >= 1900
+#define AVX2_BUILD_POSSIBLE
+#define C17_ENABLE
+#define VS_CONSTEXPR constexpr
+#else
+#define VS_CONSTEXPR
+#endif
+
+// VS 2019 v16.3
+#if _MSC_VER >= 1923
+#define AVX512_BUILD_POSSIBLE
+#endif
 
 #define VS_RESTRICT __restrict
 

@@ -5,17 +5,6 @@
 #include "JincRessizeMT.h"
 #include "resize_plane_sse41.h"
 
-// VS 2015
-#if _MSC_VER >= 1900
-#define AVX2_BUILD_POSSIBLE
-#define C17_ENABLE
-#endif
-
-// VS 2019 v16.3
-#if _MSC_VER >= 1923
-#define AVX512_BUILD_POSSIBLE
-#endif
-
 static ThreadPoolInterface *poolInterface;
 
 static uint8_t CreateMTData(MT_Data_Info_JincResizeMT MT_Data[],int output,uint8_t threads_number,uint8_t max_threads,int32_t size_x,int32_t size_y)
@@ -702,7 +691,7 @@ static void resize_plane_c(EWAPixelCoeff *coeff, const void *src_, void* VS_REST
                 src_ptr += src_stride;
             }
 
-            if (!(std::is_same<T, float>::value))
+            if VS_CONSTEXPR (!(std::is_same<T, float>::value))
                 dstp[x] = static_cast<T>(round(clamp(result, ValMin, ValMax)));
             else
                 dstp[x] = result;

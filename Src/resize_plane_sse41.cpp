@@ -2,31 +2,6 @@
 
 #include "JincRessizeMT.h"
 
-/*
-template <typename T>
-static __forceinline __m128i convert(const __m128i& x)
-{
-    return _mm_cvtepu8_epi32(x);
-}
-
-template <>
-__forceinline __m128i convert<uint16_t>(const __m128i& x)
-{
-    return _mm_cvtepu16_epi32(x);
-}
-
-template <typename T>
-static __forceinline __m128i pack(const __m128i& x, const __m128i& y)
-{
-    return _mm_packus_epi16(x, y);
-}
-
-template <>
-__forceinline __m128i pack<uint16_t>(const __m128i& x, const __m128i& y)
-{
-    return _mm_packus_epi32(x, y);
-}
-*/
 template <typename T>
 void resize_plane_sse41(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch,
 	const float ValMin, const float ValMax)
@@ -56,7 +31,7 @@ void resize_plane_sse41(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRIC
             const float* coeff_ptr = coeff->factor + meta->coeff_meta; 
 			__m128 result = _mm_setzero_ps();			
 
-            if (std::is_same<T, uint8_t>::value)
+            if VS_CONSTEXPR (std::is_same<T, uint8_t>::value)
             {
                 for (int ly = 0; ly < coeff->filter_size; ++ly)
                 {
@@ -75,7 +50,7 @@ void resize_plane_sse41(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRIC
 				const T final_res = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum), _mm_setzero_si128()), _mm_setzero_si128()));
                 dst[x] = clamp(final_res,val_min,val_max);
             }
-            else if (std::is_same<T, uint16_t>::value)
+            else if VS_CONSTEXPR (std::is_same<T, uint16_t>::value)
             {
                 for (int ly = 0; ly < coeff->filter_size; ++ly)
                 {
