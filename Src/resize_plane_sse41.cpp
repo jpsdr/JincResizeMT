@@ -6,9 +6,7 @@ template <typename T>
 void resize_plane_sse41(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch,
 	const float ValMin, const float ValMax)
 {
-    EWAPixelCoeffMeta* meta = coeff->meta;
-
-    const T* src = reinterpret_cast<const T*>(src_);
+    const T *src = reinterpret_cast<const T*>(src_);
     T* VS_RESTRICT dst = reinterpret_cast<T*>(dst_);
 
     src_pitch /= sizeof(T);

@@ -16,33 +16,34 @@
 #define mydeleteT(ptr) if (ptr!=nullptr) { delete[] ptr; ptr=nullptr;}
 #define mydelete(ptr) if (ptr!=nullptr) { delete ptr; ptr=nullptr;}
 
-// VS 2015
-#if _MSC_VER >= 1900
+#define VS_RESTRICT __restrict
+
+// VS 2013
+#if _MSC_VER >= 1800
 #define AVX2_BUILD_POSSIBLE
+#endif
+
+// VS 2017 v15.3
+#if _MSC_VER >= 1911
+#define AVX512_BUILD_POSSIBLE
 #define C17_ENABLE
 #define VS_CONSTEXPR constexpr
 #else
 #define VS_CONSTEXPR
 #endif
 
-// VS 2019 v16.3
-#if _MSC_VER >= 1923
-#define AVX512_BUILD_POSSIBLE
-#endif
-
-#define VS_RESTRICT __restrict
 
 typedef struct _MT_Data_Info_JincResizeMT
 {
-	void *src;
-	void *dst;
-	ptrdiff_t src_pitch1,src_pitch2,src_pitch3;
-	ptrdiff_t dst_pitch1,dst_pitch2,dst_pitch3;
-	int32_t src_Y_h_min,src_Y_h_max,src_Y_w;
-	int32_t src_UV_h_min,src_UV_h_max,src_UV_w;
-	int32_t dst_Y_h_min,dst_Y_h_max,dst_Y_w;
-	int32_t dst_UV_h_min,dst_UV_h_max,dst_UV_w;
-	bool top,bottom;
+	const BYTE*src1, *src2, *src3, *src4;
+	BYTE *dst1, *dst2, *dst3, *dst4;
+	int src_pitch1, src_pitch2, src_pitch3, src_pitch4;
+	int dst_pitch1, dst_pitch2, dst_pitch3, dst_pitch4;
+	int32_t src_Y_h_min, src_Y_h_max, src_Y_w;
+	int32_t src_UV_h_min, src_UV_h_max, src_UV_w;
+	int32_t dst_Y_h_min, dst_Y_h_max, dst_Y_w;
+	int32_t dst_UV_h_min, dst_UV_h_max, dst_UV_w;
+	bool top, bottom;
 } MT_Data_Info_JincResizeMT;
 
 struct EWAPixelCoeffMeta
@@ -96,6 +97,8 @@ class JincResize : public GenericVideoFilter
     bool avx512,avx2,sse41;
     int planecount;
     bool has_at_least_v8,has_at_least_v11;
+	bool grey,isRGBPfamily,isAlphaChannel;
+	uint8_t bits_per_pixel;
 	bool subsampled;
     float ValMin[4],ValMax[4];
 
@@ -105,22 +108,22 @@ class JincResize : public GenericVideoFilter
 	Public_MT_Data_Thread MT_Thread[MAX_MT_THREADS];
 	MT_Data_Info_JincResizeMT MT_Data[MAX_MT_THREADS];
 	uint8_t threads,threads_number;
-	uint16_t UserId;
+	uint32_t UserId;
 	
-	ThreadPoolFunction StaticThreadpoolF;
+	ThreadPoolFunction Jinc_MT;
 
 	static void StaticThreadpool(void *ptr);
+
+	uint8_t CreateMTData(uint8_t max_threads, int32_t src_size_x, int32_t src_size_y, int32_t dst_size_x, int32_t dst_size_y, int UV_w, int UV_h);
 
 	void FreeData(void);
 
 public:
-    JincResize(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height, int quant_x, int quant_y, int tap, double blur, int opt, IScriptEnvironment* env);
+    JincResize(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height,
+		int quant_x, int quant_y, int tap, double blur, int opt, int range, uint8_t _threads, bool negativePrefetch, IScriptEnvironment* env);
     PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env);
-    int __stdcall SetCacheHints(int cachehints, int frame_range)
-    {
-        return cachehints == CACHE_GET_MTMODE ? MT_MULTI_INSTANCE : 0;
-    }
     ~JincResize();
+	int __stdcall SetCacheHints(int cachehints, int frame_range);
 };
 
 /*

@@ -5,6 +5,10 @@
 #include "JincRessizeMT.h"
 #include "resize_plane_sse41.h"
 
+#ifdef AVX2_BUILD_POSSIBLE
+#include "resize_plane_avx2.h"
+#endif
+
 static ThreadPoolInterface *poolInterface;
 
 static uint8_t CreateMTData(MT_Data_Info_JincResizeMT MT_Data[],int output,uint8_t threads_number,uint8_t max_threads,int32_t size_x,int32_t size_y)
@@ -448,7 +452,8 @@ struct generate_coeff_params
 };
 
 #ifndef C17_ENABLE
-#define round(x) floor(x + 0.5)
+#define llround(x) (x<0.0) ? (long long)floor(x - 0.5) : (long long)floor(x + 0.5)
+#define lrintf(x) (long)floor(x + 0.5)
 #endif
 
 /* Coefficient table generation */
@@ -604,7 +609,7 @@ static bool generate_coeff_table_c(const generate_coeff_params &params)
                         const double dy = (clamp(is_border ? ypos : quantized_ypos, 0.f, static_cast<float>(src_height - 1)) - window_y) * filter_step_y;
 
                         //int index = static_cast<int>(llround((samples - 1) * (dx * dx + dy * dy) / radius2 + DOUBLE_ROUND_MAGIC_NUMBER));
-						int index = static_cast<int>(round((samples - 1) * (dx * dx + dy * dy) / radius2));
+						int index = static_cast<int>(llround((samples - 1) * (dx * dx + dy * dy) / radius2));
 
                         const float factor = func->GetFactor(index);
 
@@ -692,7 +697,7 @@ static void resize_plane_c(EWAPixelCoeff *coeff, const void *src_, void* VS_REST
             }
 
             if VS_CONSTEXPR (!(std::is_same<T, float>::value))
-                dstp[x] = static_cast<T>(round(clamp(result, ValMin, ValMax)));
+                dstp[x] = static_cast<T>(lrintf(clamp(result, ValMin, ValMax)));
             else
                 dstp[x] = result;
 
@@ -722,9 +727,23 @@ void JincResize::FreeData(void)
 	}
 }
 
-JincResize::JincResize(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height, int quant_x, int quant_y, int tap, double blur, int opt, IScriptEnvironment* env)
-    : GenericVideoFilter(_child), w(target_width), h(target_height), _opt(opt), init_lut(nullptr), has_at_least_v8(false), has_at_least_v11(false), avx512(false), avx2(false), sse41(false), subsampled(false)
+JincResize::JincResize(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height,
+	int quant_x, int quant_y, int tap, double blur, int opt, int range, uint8_t _threads, bool negativePrefetch, IScriptEnvironment* env)
+    : GenericVideoFilter(_child), w(target_width), h(target_height), _opt(opt), init_lut(nullptr),has_at_least_v8(false), has_at_least_v11(false),
+	avx512(false), avx2(false), sse41(false), subsampled(false), threads (_threads)
 {
+	UserId = 0;
+
+	Jinc_MT = StaticThreadpool;
+
+	for (int16_t i = 0; i < MAX_MT_THREADS; i++)
+	{
+		MT_Thread[i].pClass = this;
+		MT_Thread[i].f_process = 0;
+		MT_Thread[i].thread_Id = (uint8_t)i;
+		MT_Thread[i].pFunc = Jinc_MT;
+	}
+
     has_at_least_v8 = true;
     try { env->CheckVersion(8); }
     catch (const AvisynthError&) { has_at_least_v8 = false; };
@@ -732,6 +751,11 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
     has_at_least_v11 = true;
     try { env->CheckVersion(11); }
     catch (const AvisynthError&) { has_at_least_v11 = false; };
+
+	grey = vi.IsY();
+	isRGBPfamily = vi.IsPlanarRGB() || vi.IsPlanarRGBA();
+	isAlphaChannel = vi.IsYUVA() || vi.IsPlanarRGBA();
+	bits_per_pixel = (uint8_t)vi.BitsPerComponent();
 
     if (!vi.IsPlanar())
         env->ThrowError("JincResizeMT: clip must be in planar format.");
@@ -760,6 +784,9 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
     if (!(env->GetCPUFlags() & CPUF_SSE4_1) && (_opt == 1))
         env->ThrowError("JincResizeMT: opt=1 requires SSE4.1.");
 
+	if ((range < 0) || (range > 4))
+		env->ThrowError("JincResizeMT: range allowed is [0..4].");
+
     int src_width = vi.width;
     int src_height = vi.height;
 
@@ -785,12 +812,9 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
     if (crop_height <= 0.0)
         crop_height = vi.height - crop_top + crop_height;
 
-    vi.width = w;
-    vi.height = h;
-	
 	const int initial_capacity = max(target_width * target_height, src_width * src_height);
 	
-	 std::string cplace = "mpeg2";
+	std::string cplace = "mpeg2";
 	
 	const double radius = jinc_zeros[tap - 1];
 	const int samples = 1024;  // should be a multiple of 4
@@ -837,16 +861,19 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 		FreeData();
 		env->ThrowError("JincResizeMT: Error generating coeff table [0].");
 	}
-	
+
+	const int shift_w = (!grey && !isRGBPfamily) ? vi.GetPlaneWidthSubsampling(PLANAR_U) : 0;
+	const int shift_h = (!grey && !isRGBPfamily) ? vi.GetPlaneHeightSubsampling(PLANAR_U) : 0;
+
 	if ((planecount > 1) && !(vi.Is444() || vi.IsRGB()))
 	{
 
         out.emplace_back(new EWAPixelCoeff());
         subsampled = true;
-        const int sub_w = vi.GetPlaneWidthSubsampling(PLANAR_U);
-        const int sub_h = vi.GetPlaneHeightSubsampling(PLANAR_U);
-        const double div_w = 1 << sub_w;
-        const double div_h = 1 << sub_h;
+        //const int sub_w = vi.GetPlaneWidthSubsampling(PLANAR_U);
+        //const int sub_h = vi.GetPlaneHeightSubsampling(PLANAR_U);
+        const double div_w = 1 << shift_w;
+        const double div_h = 1 << shift_h;
 
         const double crop_left_uv = (cplace == "mpeg2" || cplace == "topleft") ?
             (0.5 * (1.0 - static_cast<double>(src_width) / target_width) + crop_left) / div_w : crop_left / div_w;
@@ -859,10 +886,10 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
             quant_x,
             quant_y,
             samples,
-            src_width >> sub_w,
-            src_height >> sub_h,
-            target_width >> sub_w,
-            target_height >> sub_h,
+            src_width >> shift_w,
+            src_height >> shift_h,
+            target_width >> shift_w,
+            target_height >> shift_h,
             radius,
             crop_left_uv,
             crop_top_uv,
@@ -881,53 +908,191 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 	avx512 = (!!(env->GetCPUFlags() & CPUF_AVX512F) && (_opt < 0) && has_at_least_v8) || (_opt == 3);
     avx2 = (!!(env->GetCPUFlags() & CPUF_AVX2) && (_opt < 0) && has_at_least_v8) || (_opt == 2);
     sse41 = (!!(env->GetCPUFlags() & CPUF_SSE4_1) && (_opt < 0)) || (_opt == 1);
-	
-	for (unsigned char i=0; i<4; i++)
+
+	uint8_t plane_range[4];
+
+	if ((range != 1) && (range != 4))
 	{
-		 ValMin[i] = 0.0f;
-		 ValMax[i] = static_cast<float>((1 << vi.BitsPerPixel()) - 1);
+		if ((!grey) && !isRGBPfamily)
+		{
+			plane_range[0] = 2;
+			plane_range[1] = 3;
+			plane_range[2] = 3;
+		}
+		else
+		{
+			if (grey)
+			{
+				for (unsigned char i = 0; i < 3; i++)
+					plane_range[i] = (range == 0) ? 2 : range;
+			}
+			else
+			{
+				for (unsigned char i = 0; i < 3; i++)
+					plane_range[i] = 1;
+			}
+		}
+	}
+	else
+	{
+		if (isRGBPfamily)
+			range = 1;
+
+		for (unsigned char i = 0; i < 3; i++)
+			plane_range[i] = range;
+	}
+	plane_range[3] = 1;
+
+	for (unsigned char i = 0; i < 4; i++)
+	{
+		if (bits_per_pixel <= 16)
+		{
+			switch (plane_range[i])
+			{
+				case 2 :
+					ValMin[i] = static_cast<float>(16 << (bits_per_pixel - 8));
+					ValMax[i] = static_cast<float>(235 << (bits_per_pixel - 8));
+					break;
+				case 3 :
+					ValMin[i] = static_cast<float>(16 << (bits_per_pixel - 8));
+					ValMax[i] = static_cast<float>(240 << (bits_per_pixel - 8));
+					break;
+				case 4 :
+					ValMin[i] = static_cast<float>(16 << (bits_per_pixel - 8));
+					ValMax[i] = static_cast<float>((1 << bits_per_pixel) - 1);
+					break;
+				default:
+					ValMin[i] = 0.0f;
+					ValMax[i] = static_cast<float>((1 << bits_per_pixel) - 1);
+					break;
+			}
+		}
+		else
+		{
+			if ((!grey) && !isRGBPfamily)
+			{
+				switch (i)
+				{
+					case 0 :
+					case 3 :
+						ValMin[i] = 0.0f;
+						ValMax[i] = 1.0f;
+						break;
+					case 1 :
+					case 2 :
+						ValMin[i] = -0.5f;
+						ValMax[i] = 0.5f;
+						break;
+					default :
+						ValMin[i] = 0.0f;
+						ValMax[i] = 1.0f;
+						break;
+				}
+			}
+			else
+			{
+				ValMin[i] = 0.0f;
+				ValMax[i] = 1.0f;
+			}
+		}
 	}
 
-	threads_number = 1;
-	threads = 1;
-
+	if (src_height < 32) threads_number = 1;
+	else threads_number = threads;
 
     if (vi.ComponentSize() == 1)
     {
-/*        if (avx512)
-            process_frame = resize_plane_avx512<uint8_t>;
-        else if (avx2)
-            process_frame = resize_plane_avx2<uint8_t>;
-        else*/
-            if (sse41)
-				process_frame = resize_plane_sse41<uint8_t>;
+/*
+		if (avx512)
+			process_frame = resize_plane_avx512<uint8_t>;
+		else
+*/
+		{
+#ifdef AVX2_BUILD_POSSIBLE
+			if (avx2)
+				process_frame = resize_plane_avx2<uint8_t>;
 			else
-				process_frame = resize_plane_c<uint8_t>;
+#endif
+			{
+				if (sse41)
+					process_frame = resize_plane_sse41<uint8_t>;
+				else
+					process_frame = resize_plane_c<uint8_t>;
+			}
+		}
     }
     else if (vi.ComponentSize() == 2)
     {
-/*        if (avx512)
-            process_frame = resize_plane_avx512<uint16_t>;
-        else if (avx2)
-            process_frame = resize_plane_avx2<uint16_t>;
-        else*/
-            if (sse41)
-				process_frame = resize_plane_sse41<uint16_t>;
+		/*
+				if (avx512)
+					process_frame = resize_plane_avx512<uint16_t>;
+				else
+		*/
+		{
+#ifdef AVX2_BUILD_POSSIBLE
+			if (avx2)
+				process_frame = resize_plane_avx2<uint16_t>;
 			else
-				process_frame = resize_plane_c<uint16_t>;
-     }
+#endif
+			{
+				if (sse41)
+					process_frame = resize_plane_sse41<uint16_t>;
+				else
+					process_frame = resize_plane_c<uint16_t>;
+			}
+		}
+    }
     else
     {
-/*        if (avx512)
-            process_frame = resize_plane_avx512<float>;
-        else if (avx2)
-            process_frame = resize_plane_avx2<float>;
-        else*/
-            if (sse41)
-				process_frame = resize_plane_sse41<float>;
+		/*
+				if (avx512)
+					process_frame = resize_plane_avx512<float>;
+				else
+		*/
+		{
+#ifdef AVX2_BUILD_POSSIBLE
+			if (avx2)
+				process_frame = resize_plane_avx2<float>;
 			else
-				process_frame = resize_plane_c<float>;
+#endif
+			{
+				if (sse41)
+					process_frame = resize_plane_sse41<float>;
+				else
+					process_frame = resize_plane_c<float>;
+			}
+		}
     }
+
+	threads_number = CreateMTData(threads_number, src_width, src_height, target_width, target_height, shift_w, shift_h);
+
+	if (threads_number > 1)
+	{
+		if (!poolInterface->GetUserId(UserId))
+		{
+			FreeData();
+			poolInterface->DeAllocateAllThreads(true);
+			env->ThrowError("ResizeHMT: Error with the TheadPool while getting UserId!");
+		}
+		if (!poolInterface->EnableAllowSeveral(UserId))
+		{
+			FreeData();
+			poolInterface->DeAllocateAllThreads(true);
+			env->ThrowError("ResizeHMT: Error with the TheadPool while allowing multiple request on UserId!");
+		}
+		if (negativePrefetch)
+		{
+			if (!poolInterface->DisableWaitonRequest(UserId))
+			{
+				FreeData();
+				poolInterface->DeAllocateAllThreads(true);
+				env->ThrowError("ResizeHMT: Error with the TheadPool while disabling wait on request on UserId!");
+			}
+		}
+	}
+
+	vi.width = w;
+	vi.height = h;
 }
 
 JincResize::~JincResize()
@@ -939,11 +1104,276 @@ JincResize::~JincResize()
 	if (threads>1) poolInterface->DeAllocateAllThreads(true);
 }
 
-PVideoFrame JincResize::GetFrame(int n, IScriptEnvironment* env)
+int __stdcall JincResize::SetCacheHints(int cachehints, int frame_range)
 {
-    PVideoFrame src = child->GetFrame(n, env);
-    PVideoFrame dst;
-    if (has_at_least_v8) dst = env->NewVideoFrameP(vi, &src); else dst = env->NewVideoFrame(vi);
+	switch (cachehints)
+	{
+	case CACHE_GET_MTMODE:
+		return MT_NICE_FILTER;
+	default:
+		return 0;
+	}
+}
+
+
+uint8_t JincResize::CreateMTData(uint8_t max_threads, int32_t src_size_x, int32_t src_size_y, int32_t dst_size_x, int32_t dst_size_y, int UV_w, int UV_h)
+{
+	if ((max_threads <= 1) || (max_threads > threads_number))
+	{
+		MT_Data[0].top = true;
+		MT_Data[0].bottom = true;
+		MT_Data[0].src_Y_h_min = 0;
+		MT_Data[0].dst_Y_h_min = 0;
+		MT_Data[0].src_Y_h_max = src_size_y;
+		MT_Data[0].dst_Y_h_max = dst_size_y;
+		MT_Data[0].src_UV_h_min = 0;
+		MT_Data[0].dst_UV_h_min = 0;
+		if (UV_h > 0)
+		{
+			MT_Data[0].src_UV_h_max = src_size_y >> UV_h;
+			MT_Data[0].dst_UV_h_max = dst_size_y >> UV_h;
+		}
+		else
+		{
+			MT_Data[0].src_UV_h_max = src_size_y;
+			MT_Data[0].dst_UV_h_max = dst_size_y;
+		}
+		MT_Data[0].src_Y_w = src_size_x;
+		MT_Data[0].dst_Y_w = dst_size_x;
+		if (UV_w > 0)
+		{
+			MT_Data[0].src_UV_w = src_size_x >> UV_w;
+			MT_Data[0].dst_UV_w = dst_size_x >> UV_w;
+		}
+		else
+		{
+			MT_Data[0].src_UV_w = src_size_x;
+			MT_Data[0].dst_UV_w = dst_size_x;
+		}
+		return(1);
+	}
+
+	int32_t _y_min, _dh;
+	int32_t src_dh_Y, src_dh_UV, dst_dh_Y, dst_dh_UV;
+	int32_t h_y;
+	uint8_t i, max_src = 1, max_dst = 1, max;
+
+	dst_dh_Y = (dst_size_y + (uint32_t)max_threads - 1) / (uint32_t)max_threads;
+	if (dst_dh_Y < 16) dst_dh_Y = 16;
+	if ((dst_dh_Y & 3) != 0) dst_dh_Y = ((dst_dh_Y + 3) >> 2) << 2;
+
+	if (src_size_y == dst_size_y) src_dh_Y = dst_dh_Y;
+	else
+	{
+		src_dh_Y = (src_size_y + (uint32_t)max_threads - 1) / (uint32_t)max_threads;
+		if (src_dh_Y < 16) src_dh_Y = 16;
+		if ((src_dh_Y & 3) != 0) src_dh_Y = ((src_dh_Y + 3) >> 2) << 2;
+	}
+
+	_y_min = src_size_y;
+	_dh = src_dh_Y;
+	h_y = _dh;
+	while (h_y < (_y_min - 16))
+	{
+		max_src++;
+		h_y += _dh;
+	}
+
+	_y_min = dst_size_y;
+	_dh = dst_dh_Y;
+	h_y = _dh;
+	while (h_y < (_y_min - 16))
+	{
+		max_dst++;
+		h_y += _dh;
+	}
+
+	max = (max_src < max_dst) ? max_src : max_dst;
+
+	if (max == 1)
+	{
+		MT_Data[0].top = true;
+		MT_Data[0].bottom = true;
+		MT_Data[0].src_Y_h_min = 0;
+		MT_Data[0].dst_Y_h_min = 0;
+		MT_Data[0].src_Y_h_max = src_size_y;
+		MT_Data[0].dst_Y_h_max = dst_size_y;
+		MT_Data[0].src_UV_h_min = 0;
+		MT_Data[0].dst_UV_h_min = 0;
+		if (UV_h > 0)
+		{
+			MT_Data[0].src_UV_h_max = src_size_y >> UV_h;
+			MT_Data[0].dst_UV_h_max = dst_size_y >> UV_h;
+		}
+		else
+		{
+			MT_Data[0].src_UV_h_max = src_size_y;
+			MT_Data[0].dst_UV_h_max = dst_size_y;
+		}
+		MT_Data[0].src_Y_w = src_size_x;
+		MT_Data[0].dst_Y_w = dst_size_x;
+		if (UV_w > 0)
+		{
+			MT_Data[0].src_UV_w = src_size_x >> UV_w;
+			MT_Data[0].dst_UV_w = dst_size_x >> UV_w;
+		}
+		else
+		{
+			MT_Data[0].src_UV_w = src_size_x;
+			MT_Data[0].dst_UV_w = dst_size_x;
+		}
+		return(1);
+	}
+
+	src_dh_UV = (UV_h > 0) ? src_dh_Y >> UV_h : src_dh_Y;
+	dst_dh_UV = (UV_h > 0) ? dst_dh_Y >> UV_h : dst_dh_Y;
+
+	MT_Data[0].top = true;
+	MT_Data[0].bottom = false;
+	MT_Data[0].src_Y_h_min = 0;
+	MT_Data[0].src_Y_h_max = src_dh_Y;
+	MT_Data[0].dst_Y_h_min = 0;
+	MT_Data[0].dst_Y_h_max = dst_dh_Y;
+	MT_Data[0].src_UV_h_min = 0;
+	MT_Data[0].src_UV_h_max = src_dh_UV;
+	MT_Data[0].dst_UV_h_min = 0;
+	MT_Data[0].dst_UV_h_max = dst_dh_UV;
+
+	i = 1;
+	while (i < max)
+	{
+		MT_Data[i].top = false;
+		MT_Data[i].bottom = false;
+		MT_Data[i].src_Y_h_min = MT_Data[i - 1].src_Y_h_max;
+		MT_Data[i].src_Y_h_max = MT_Data[i].src_Y_h_min + src_dh_Y;
+		MT_Data[i].dst_Y_h_min = MT_Data[i - 1].dst_Y_h_max;
+		MT_Data[i].dst_Y_h_max = MT_Data[i].dst_Y_h_min + dst_dh_Y;
+		MT_Data[i].src_UV_h_min = MT_Data[i - 1].src_UV_h_max;
+		MT_Data[i].src_UV_h_max = MT_Data[i].src_UV_h_min + src_dh_UV;
+		MT_Data[i].dst_UV_h_min = MT_Data[i - 1].dst_UV_h_max;
+		MT_Data[i].dst_UV_h_max = MT_Data[i].dst_UV_h_min + dst_dh_UV;
+		i++;
+	}
+
+	MT_Data[max - 1].bottom = true;
+	MT_Data[max - 1].src_Y_h_max = src_size_y;
+	MT_Data[max - 1].dst_Y_h_max = dst_size_y;
+	if (UV_h > 0)
+	{
+		MT_Data[max - 1].src_UV_h_max = src_size_y >> UV_h;
+		MT_Data[max - 1].dst_UV_h_max = dst_size_y >> UV_h;
+	}
+	else
+	{
+		MT_Data[max - 1].src_UV_h_max = src_size_y;
+		MT_Data[max - 1].dst_UV_h_max = dst_size_y;
+	}
+
+	for (i = 0; i < max; i++)
+	{
+		MT_Data[i].src_Y_w = src_size_x;
+		MT_Data[i].dst_Y_w = dst_size_x;
+		if (UV_w > 0)
+		{
+			MT_Data[i].src_UV_w = src_size_x >> UV_w;
+			MT_Data[i].dst_UV_w = dst_size_x >> UV_w;
+		}
+		else
+		{
+			MT_Data[i].src_UV_w = src_size_x;
+			MT_Data[i].dst_UV_w = dst_size_x;
+		}
+	}
+
+	return(max);
+}
+
+
+void JincResize::StaticThreadpool(void *ptr)
+{
+	Public_MT_Data_Thread *data = (Public_MT_Data_Thread *)ptr;
+	JincResize *ptrClass = (JincResize *)data->pClass;
+	MT_Data_Info_JincResizeMT *MT_DataGF = ((MT_Data_Info_JincResizeMT *)data->pData) + data->thread_Id;
+
+	switch (data->f_process)
+	{
+/*	case 1: ptrClass->ResamplerLumaMT(MT_DataGF);
+		break;
+	case 2: ptrClass->ResamplerUChromaMT(MT_DataGF);
+		break;
+	case 3: ptrClass->ResamplerVChromaMT(MT_DataGF);
+		break;
+	case 4: ptrClass->ResamplerLumaMT2(MT_DataGF);
+		break;
+	case 5: ptrClass->ResamplerLumaMT3(MT_DataGF);
+		break;
+	case 6: ptrClass->ResamplerLumaMT4(MT_DataGF);
+		break;*/
+	default:;
+	}
+}
+
+
+PVideoFrame __stdcall JincResize::GetFrame(int n, IScriptEnvironment* env)
+{
+	PVideoFrame src = child->GetFrame(n, env);
+	PVideoFrame dst = (has_at_least_v8) ? env->NewVideoFrameP(vi, &src) : env->NewVideoFrame(vi, 64);
+
+	Public_MT_Data_Thread MT_ThreadGF[MAX_MT_THREADS];
+	MT_Data_Info_JincResizeMT MT_DataGF[MAX_MT_THREADS];
+	int8_t idxPool = -1;
+
+	const int src_pitch_1 = src->GetPitch();
+	const int dst_pitch_1 = dst->GetPitch();
+	const BYTE *srcp_1 = src->GetReadPtr();
+	BYTE *dstp_1 = dst->GetWritePtr();
+
+	const int src_pitch_2 = (!grey && !isRGBPfamily) ? src->GetPitch(PLANAR_U) : (isRGBPfamily) ? src->GetPitch(PLANAR_B) : 0;
+	const int dst_pitch_2 = (!grey && !isRGBPfamily) ? dst->GetPitch(PLANAR_U) : (isRGBPfamily) ? dst->GetPitch(PLANAR_B) : 0;
+	const BYTE *srcp_2 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? src->GetReadPtr(PLANAR_U) : (isRGBPfamily) ? src->GetReadPtr(PLANAR_B) : nullptr;
+	BYTE *dstp_2 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? dst->GetWritePtr(PLANAR_U) : (isRGBPfamily) ? dst->GetWritePtr(PLANAR_B) : nullptr;
+
+	const int src_pitch_3 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? src->GetPitch(PLANAR_V) : (isRGBPfamily) ? src->GetPitch(PLANAR_R) : 0;
+	const int dst_pitch_3 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? dst->GetPitch(PLANAR_V) : (isRGBPfamily) ? dst->GetPitch(PLANAR_R) : 0;
+	const BYTE *srcp_3 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? src->GetReadPtr(PLANAR_V) : (isRGBPfamily) ? src->GetReadPtr(PLANAR_R) : nullptr;
+	BYTE *dstp_3 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? dst->GetWritePtr(PLANAR_V) : (isRGBPfamily) ? dst->GetWritePtr(PLANAR_R) : nullptr;
+
+	const int src_pitch_4 = (isAlphaChannel) ? src->GetPitch(PLANAR_A) : 0;
+	const int dst_pitch_4 = (isAlphaChannel) ? dst->GetPitch(PLANAR_A) : 0;
+	const BYTE *srcp_4 = (isAlphaChannel) ? src->GetReadPtr(PLANAR_A) : nullptr;
+	BYTE *dstp_4 = (isAlphaChannel) ? dst->GetWritePtr(PLANAR_A) : nullptr;
+
+	memcpy(MT_ThreadGF, MT_Thread, sizeof(MT_ThreadGF));
+	memcpy(MT_DataGF, MT_Data, sizeof(MT_Data));
+
+	for (uint8_t i = 0; i < threads_number; i++)
+		MT_ThreadGF[i].pData = (void *)MT_DataGF;
+
+	if (threads_number > 1)
+	{
+		if ((!poolInterface->RequestThreadPool(UserId, idxPool, threads_number, MT_ThreadGF)) || (idxPool == -1))
+			env->ThrowError("JincResizeMT: Error with the TheadPool while requesting threadpool !");
+	}
+
+	for (uint8_t i = 0; i < threads_number; i++)
+	{
+		MT_DataGF[i].src1 = srcp_1;
+		MT_DataGF[i].src2 = srcp_2;
+		MT_DataGF[i].src3 = srcp_3;
+		MT_DataGF[i].src4 = srcp_4;
+		MT_DataGF[i].src_pitch1 = src_pitch_1;
+		MT_DataGF[i].src_pitch2 = src_pitch_2;
+		MT_DataGF[i].src_pitch3 = src_pitch_3;
+		MT_DataGF[i].src_pitch4 = src_pitch_4;
+		MT_DataGF[i].dst1 = dstp_1 + (MT_Data[i].dst_Y_h_min*dst_pitch_1);
+		MT_DataGF[i].dst2 = dstp_2 + (MT_Data[i].dst_UV_h_min*dst_pitch_2);
+		MT_DataGF[i].dst3 = dstp_3 + (MT_Data[i].dst_UV_h_min*dst_pitch_3);
+		MT_DataGF[i].dst4 = dstp_4 + (MT_Data[i].dst_Y_h_min*dst_pitch_4);
+		MT_DataGF[i].dst_pitch1 = dst_pitch_1;
+		MT_DataGF[i].dst_pitch2 = dst_pitch_2;
+		MT_DataGF[i].dst_pitch3 = dst_pitch_3;
+		MT_DataGF[i].dst_pitch4 = dst_pitch_4;
+	}
 
     int planes_y[4] = { PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A };
     int planes_r[4] = { PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A };
@@ -969,19 +1399,6 @@ PVideoFrame JincResize::GetFrame(int n, IScriptEnvironment* env)
 		else i_coeff = 0;
 
 		process_frame(out[i_coeff],srcp,dstp,dst_width,dst_height,src_stride,dst_stride,ValMin[i],ValMax[i]);
-		
-/*
-		if (!sse41 && !avx2 && !avx512)
-        {
-            if (vi.ComponentSize() == 1)
-                resize_plane_c<uint8_t>(out[i_coeff],srcp,dstp,dst_width,dst_height,src_stride,dst_stride,ValMin[i],ValMax[i]);
-            else if (vi.ComponentSize() == 2)
-                resize_plane_c<uint16_t>(out[i_coeff],srcp,dstp,dst_width,dst_height,src_stride,dst_stride,ValMin[i],ValMax[i]);
-            else
-                resize_plane_c<float>(out[i_coeff],srcp,dstp,dst_width,dst_height,src_stride,dst_stride,ValMin[i],ValMax[i]);
-        }
-        else
-            process_frame(out[i], srcp, dstp, dst_width, dst_height, src_stride, dst_stride);*/
     }
 
     return dst;
@@ -990,6 +1407,77 @@ PVideoFrame JincResize::GetFrame(int n, IScriptEnvironment* env)
 AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnvironment* env)
 {
     const VideoInfo& vi = args[0].AsClip()->GetVideoInfo();
+
+	const int threads = args[13].AsInt(0);
+	const bool LogicalCores = args[14].AsBool(true);
+	const bool MaxPhysCores = args[15].AsBool(true);
+	const bool SetAffinity = args[16].AsBool(false);
+	const bool sleep = args[17].AsBool(false);
+	int prefetch = args[18].AsInt(0);
+	int thread_level = args[19].AsInt(6);
+
+	const bool negativePrefetch = (prefetch < 0) ? true : false;
+	prefetch = abs(prefetch);
+
+	if ((threads < 0) || (threads > MAX_MT_THREADS))
+		env->ThrowError("JincResizeMT: [threads] must be between 0 and %ld.", MAX_MT_THREADS);
+	if (prefetch == 0) prefetch = 1;
+	if (prefetch > MAX_THREAD_POOL)
+		env->ThrowError("JincResizeMT: [prefetch] can't be higher than %d.", MAX_THREAD_POOL);
+	if ((thread_level < 1) || (thread_level > 7))
+		env->ThrowError("JincResizeMT: [ThreadLevel] must be between 1 and 7.");
+
+	uint8_t threads_number = 1;
+
+	if (threads != 1)
+	{
+		const ThreadLevelName TabLevel[8] = { NoneThreadLevel,IdleThreadLevel,LowestThreadLevel,
+			BelowThreadLevel,NormalThreadLevel,AboveThreadLevel,HighestThreadLevel,CriticalThreadLevel };
+
+		if (!poolInterface->CreatePool(prefetch)) env->ThrowError("JincResizeMT: Unable to create ThreadPool!");
+
+		threads_number = poolInterface->GetThreadNumber(threads, LogicalCores);
+
+		if (threads_number == 0) env->ThrowError("JincResizeMT: Error with the TheadPool while getting CPU info!");
+
+		if (threads_number > 1)
+		{
+			if (prefetch > 1)
+			{
+				if (SetAffinity && (prefetch <= poolInterface->GetPhysicalCoreNumber()))
+				{
+					float delta = (float)poolInterface->GetPhysicalCoreNumber() / (float)prefetch, Offset = 0.0f;
+
+					for (uint8_t i = 0; i < prefetch; i++)
+					{
+						if (!poolInterface->AllocateThreads(threads_number, (uint8_t)ceil(Offset), 0, MaxPhysCores,
+							true, true, TabLevel[thread_level], i))
+						{
+							poolInterface->DeAllocateAllThreads(true);
+							env->ThrowError("JincResizeMT: Error with the TheadPool while allocating threadpool!");
+						}
+						Offset += delta;
+					}
+				}
+				else
+				{
+					if (!poolInterface->AllocateThreads(threads_number, 0, 0, MaxPhysCores, false, true, TabLevel[thread_level], -1))
+					{
+						poolInterface->DeAllocateAllThreads(true);
+						env->ThrowError("JincResizeMT: Error with the TheadPool while allocating threadpool!");
+					}
+				}
+			}
+			else
+			{
+				if (!poolInterface->AllocateThreads(threads_number, 0, 0, MaxPhysCores, SetAffinity, true, TabLevel[thread_level], -1))
+				{
+					poolInterface->DeAllocateAllThreads(true);
+					env->ThrowError("JincResizeMT: Error with the TheadPool while allocating threadpool!");
+				}
+			}
+		}
+	}
 
     return new JincResize(
         args[0].AsClip(),
@@ -1004,23 +1492,11 @@ AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnviro
         args[9].AsInt(3),
         args[10].AsFloat(1.0),
         args[11].AsInt(-1),
+		args[12].AsInt(1),
+		args[13].AsInt(0),
+		negativePrefetch,
         env);
 }
-
-/*
-template <int taps>
-AVSValue __cdecl resizer_jinc36resize(AVSValue args, void* user_data, IScriptEnvironment* env)
-{
-    Arguments mapped_args;
-
-    resizer(args, &mapped_args);
-    mapped_args.add(args[9].AsInt(taps), "tap");
-
-    return env->Invoke("JincResizeMT", mapped_args.args(), mapped_args.arg_names()).AsClip();
-}
-
-const AVS_Linkage* AVS_linkage;
-*/
 
 const AVS_Linkage *AVS_linkage = nullptr;
 

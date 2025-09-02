@@ -23,25 +23,27 @@
 #ifndef __ThreadPool_H__
 #define __ThreadPool_H__
 
-#include <Windows.h>
+#include <windows.h>
 
 #include "./ThreadPoolDef.h"
 
-#define THREADPOOL_VERSION "ThreadPool 1.4.1"
+#define THREADPOOL_VERSION "ThreadPool 1.4.5"
+
+#define MAX_PHYSICAL_CORES 64
 
 typedef struct _MT_Data_Thread
 {
 	Public_MT_Data_Thread *MTData;
-	volatile uint8_t f_process,thread_Id;
-	volatile HANDLE nextJob,jobFinished;
+	uint8_t f_process,thread_Id;
+	HANDLE nextJob,jobFinished;
 } MT_Data_Thread;
 
 
 typedef struct _Arch_CPU
 {
 	uint8_t NbPhysCore,NbLogicCPU;
-	uint8_t NbHT[64];
-	ULONG_PTR ProcMask[64];
+	uint8_t NbHT[MAX_PHYSICAL_CORES];
+	ULONG_PTR ProcMask[MAX_PHYSICAL_CORES];
 	ULONG_PTR FullMask;
 } Arch_CPU;
 
@@ -86,11 +88,11 @@ class ThreadPool
 	HANDLE thds[MAX_MT_THREADS];
 	DWORD tids[MAX_MT_THREADS];
 	ULONG_PTR ThreadMask[MAX_MT_THREADS];
-	volatile bool ThreadSleep[MAX_MT_THREADS];
-	volatile ThreadLevelName nPriority;
+	bool ThreadSleep[MAX_MT_THREADS];
+	ThreadLevelName nPriority;
 
-	volatile bool Status_Ok;
-	volatile uint8_t TotalThreadsRequested,CurrentThreadsAllocated,CurrentThreadsUsed;
+	bool Status_Ok;
+	uint8_t TotalThreadsRequested,CurrentThreadsAllocated,CurrentThreadsUsed;
 	
 	void FreeThreadPool(void);
 	void DestroyThreadPool(void);

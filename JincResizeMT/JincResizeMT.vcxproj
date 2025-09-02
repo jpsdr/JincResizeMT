@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClInclude Include="..\Src\avisynth.h" />
     <ClInclude Include="..\Src\JincRessizeMT.h" />
+    <ClInclude Include="..\Src\resize_plane_avx2.h" />
     <ClInclude Include="..\Src\resize_plane_sse41.h" />
     <ClInclude Include="..\Src\ThreadPool.h" />
     <ClInclude Include="..\Src\ThreadPoolDef.h" />
@@ -31,6 +32,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Src\JincResizeMT.cpp" />
+    <ClCompile Include="..\Src\resize_plane_avx2.cpp" />
     <ClCompile Include="..\Src\resize_plane_sse41.cpp" />
     <ClCompile Include="..\Src\ThreadPool.cpp" />
     <ClCompile Include="..\Src\ThreadPoolInterface.cpp" />
