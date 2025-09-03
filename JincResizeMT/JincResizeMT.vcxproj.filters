@@ -36,6 +36,9 @@
     <ClInclude Include="..\Src\resize_plane_avx2.h">
       <Filter>Fichiers d%27en-tête</Filter>
     </ClInclude>
+    <ClInclude Include="..\Src\resize_plane_avx512.h">
+      <Filter>Fichiers d%27en-tête</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\Src\JincResizeMT.rc">
@@ -56,6 +59,9 @@
       <Filter>Fichiers sources</Filter>
     </ClCompile>
     <ClCompile Include="..\Src\resize_plane_avx2.cpp">
+      <Filter>Fichiers sources</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Src\resize_plane_avx512.cpp">
       <Filter>Fichiers sources</Filter>
     </ClCompile>
   </ItemGroup>

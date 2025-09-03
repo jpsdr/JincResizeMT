@@ -6,7 +6,7 @@
 #include "JincRessizeMT.h"
 
 template <typename T>
-void resize_plane_avx2(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch,
+void resize_plane_avx2(EWAPixelCoeff *coeff, const void *src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch,
 	const float ValMin, const float ValMax)
 {
     const T *src = reinterpret_cast<const T*>(src_);
@@ -21,6 +21,8 @@ void resize_plane_avx2(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT
 
 	EWAPixelCoeffMeta *meta_y = coeff->meta;
 
+	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
+
     for (int y = 0; y < dst_height; y++)
     {
 		EWAPixelCoeffMeta *meta = meta_y;
@@ -34,16 +36,16 @@ void resize_plane_avx2(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT
 
             if VS_CONSTEXPR (std::is_same<T, uint8_t>::value)
             {
-                for (int ly = 0; ly < coeff->filter_size; ++ly)
+                for (int ly = 0; ly < filter_size; ++ly)
                 {
-                    for (int lx = 0; lx < coeff->filter_size; lx += 8)
+                    for (int lx = 0; lx < filter_size; lx += 8)
                     {
                         const __m256 src_ps = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr + lx)))));
                         const __m256 coeff = _mm256_load_ps(coeff_ptr + lx);
                         result = _mm256_fmadd_ps(src_ps, coeff, result);
                     }
 
-                    coeff_ptr += coeff->coeff_stride;
+                    coeff_ptr += coeff_stride;
                     src_ptr += src_pitch;
                 }
 
@@ -54,16 +56,16 @@ void resize_plane_avx2(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT
             }
             else if VS_CONSTEXPR (std::is_same<T, uint16_t>::value)
             {
-                for (int ly = 0; ly < coeff->filter_size; ++ly)
+                for (int ly = 0; ly < filter_size; ++ly)
                 {
-                    for (int lx = 0; lx < coeff->filter_size; lx += 8)
+                    for (int lx = 0; lx < filter_size; lx += 8)
                     {
                         const __m256 src_ps = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr + lx)))));
                         const __m256 coeff = _mm256_load_ps(coeff_ptr + lx);
                         result = _mm256_fmadd_ps(src_ps, coeff, result);
                     }
 
-                    coeff_ptr += coeff->coeff_stride;
+                    coeff_ptr += coeff_stride;
                     src_ptr += src_pitch;
                 }
 
@@ -74,16 +76,16 @@ void resize_plane_avx2(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT
             }
             else
             {
-                for (int ly = 0; ly < coeff->filter_size; ++ly)
+                for (int ly = 0; ly < filter_size; ++ly)
                 {
-                    for (int lx = 0; lx < coeff->filter_size; lx += 8)
+                    for (int lx = 0; lx < filter_size; lx += 8)
                     {
                         const __m256 src_ps = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr + lx)), min_val);
                         const __m256 coeff = _mm256_load_ps(coeff_ptr + lx);
                         result = _mm256_fmadd_ps(src_ps, coeff, result);
                     }
 
-                    coeff_ptr += coeff->coeff_stride;
+                    coeff_ptr += coeff_stride;
                     src_ptr += src_pitch;
                 }
 
@@ -97,8 +99,8 @@ void resize_plane_avx2(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT
 	} // for (y)
 }
 
-template void resize_plane_avx2<uint8_t>(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch, const float ValMin, const float ValMax);
-template void resize_plane_avx2<uint16_t>(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch, const float ValMin, const float ValMax);
-template void resize_plane_avx2<float>(EWAPixelCoeff* coeff, const void* src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch, const float ValMin, const float ValMax);
+template void resize_plane_avx2<uint8_t>(EWAPixelCoeff *coeff, const void *src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch, const float ValMin, const float ValMax);
+template void resize_plane_avx2<uint16_t>(EWAPixelCoeff *coeff, const void *src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch, const float ValMin, const float ValMax);
+template void resize_plane_avx2<float>(EWAPixelCoeff *coeff, const void *src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch, const float ValMin, const float ValMax);
 
 #endif

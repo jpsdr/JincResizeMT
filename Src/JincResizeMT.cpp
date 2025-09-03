@@ -9,6 +9,10 @@
 #include "resize_plane_avx2.h"
 #endif
 
+#ifdef AVX512_BUILD_POSSIBLE
+#include "resize_plane_avx512.h"
+#endif
+
 static ThreadPoolInterface *poolInterface;
 
 static uint8_t CreateMTData(MT_Data_Info_JincResizeMT MT_Data[],int output,uint8_t threads_number,uint8_t max_threads,int32_t size_x,int32_t size_y)
@@ -671,8 +675,10 @@ static void resize_plane_c(EWAPixelCoeff *coeff, const void *src_, void* VS_REST
 
     src_stride /= sizeof(T);
     dst_stride /= sizeof(T);
-	
+
 	EWAPixelCoeffMeta *meta_y = coeff->meta;
+
+	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
 
     for (int y = 0; y < dst_height; y++)
     {
@@ -686,13 +692,13 @@ static void resize_plane_c(EWAPixelCoeff *coeff, const void *src_, void* VS_REST
 
             float result = 0.0f;
 
-            for (int ly = 0; ly < coeff->filter_size; ly++)
+            for (int ly = 0; ly < filter_size; ly++)
             {
-                for (int lx = 0; lx < coeff->filter_size; lx++)
+                for (int lx = 0; lx < filter_size; lx++)
                 {
                     result += src_ptr[lx] * coeff_ptr[lx];
                 }
-                coeff_ptr += coeff->coeff_stride;
+                coeff_ptr += coeff_stride;
                 src_ptr += src_stride;
             }
 
@@ -1002,11 +1008,11 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 
     if (vi.ComponentSize() == 1)
     {
-/*
+#ifdef AVX512_BUILD_POSSIBLE
 		if (avx512)
 			process_frame = resize_plane_avx512<uint8_t>;
 		else
-*/
+#endif
 		{
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
@@ -1023,11 +1029,11 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
     }
     else if (vi.ComponentSize() == 2)
     {
-		/*
-				if (avx512)
-					process_frame = resize_plane_avx512<uint16_t>;
-				else
-		*/
+#ifdef AVX512_BUILD_POSSIBLE
+		if (avx512)
+			process_frame = resize_plane_avx512<uint16_t>;
+		else
+#endif
 		{
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
@@ -1044,11 +1050,11 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
     }
     else
     {
-		/*
-				if (avx512)
-					process_frame = resize_plane_avx512<float>;
-				else
-		*/
+#ifdef AVX512_BUILD_POSSIBLE
+		if (avx512)
+			process_frame = resize_plane_avx512<float>;
+		else
+#endif
 		{
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
