@@ -1,6 +1,15 @@
-#define __STDCPP_WANT_MATH_SPEC_FUNCS__
-
 #include <cmath>
+
+// VS 2013
+#if _MSC_VER >= 1800
+#define AVX2_BUILD_POSSIBLE
+#endif
+
+// VS 2017 v15.3
+#if _MSC_VER >= 1911
+#define AVX512_BUILD_POSSIBLE
+#define C17_ENABLE
+#endif
 
 #include "JincRessizeMT.h"
 #include "resize_plane_sse41.h"
@@ -13,107 +22,13 @@
 #include "resize_plane_avx512.h"
 #endif
 
+#define myfree(ptr) if (ptr!=nullptr) { free(ptr); ptr=nullptr;}
+#define myalignedfree(ptr) if (ptr!=nullptr) { _aligned_free(ptr); ptr=nullptr;}
+#define mydeleteT(ptr) if (ptr!=nullptr) { delete[] ptr; ptr=nullptr;}
+#define mydelete(ptr) if (ptr!=nullptr) { delete ptr; ptr=nullptr;}
+
 static ThreadPoolInterface *poolInterface;
 
-static uint8_t CreateMTData(MT_Data_Info_JincResizeMT MT_Data[],int output,uint8_t threads_number,uint8_t max_threads,int32_t size_x,int32_t size_y)
-{
-	if ((max_threads<=1) || (max_threads>threads_number))
-	{
-		MT_Data[0].top=true;
-		MT_Data[0].bottom=true;
-		MT_Data[0].src_Y_h_min=0;
-		MT_Data[0].dst_Y_h_min=0;
-		MT_Data[0].src_Y_h_max=size_y;
-		MT_Data[0].dst_Y_h_max=size_y;
-		MT_Data[0].src_UV_h_min=0;
-		MT_Data[0].dst_UV_h_min=0;
-		MT_Data[0].src_UV_h_max=size_y >> 1;
-		MT_Data[0].dst_UV_h_max=size_y;
-		MT_Data[0].src_Y_w=size_x;
-		if (output==0) MT_Data[0].dst_Y_w=size_x << 1;
-		else MT_Data[0].dst_Y_w=size_x;
-		MT_Data[0].src_UV_w=size_x >> 1;
-		MT_Data[0].dst_UV_w=size_x >> 1;
-		return(1);
-	}
-
-	int32_t dh_Y,dh_UV,h_y;
-	uint8_t i,max=1;
-
-	dh_Y=(size_y+(int32_t)max_threads-1)/(int32_t)max_threads;
-	if (dh_Y<16) dh_Y=16;
-	if ((dh_Y & 3)!=0) dh_Y=((dh_Y+3) >> 2) << 2;
-
-	h_y=dh_Y;
-	while (h_y<(size_y-16))
-	{
-		max++;
-		h_y+=dh_Y;
-	}
-
-	if (max==1)
-	{
-		MT_Data[0].top=true;
-		MT_Data[0].bottom=true;
-		MT_Data[0].src_Y_h_min=0;
-		MT_Data[0].dst_Y_h_min=0;
-		MT_Data[0].src_Y_h_max=size_y;
-		MT_Data[0].dst_Y_h_max=size_y;
-		MT_Data[0].src_UV_h_min=0;
-		MT_Data[0].dst_UV_h_min=0;
-		MT_Data[0].src_UV_h_max=size_y >> 1;
-		MT_Data[0].dst_UV_h_max=size_y;
-		MT_Data[0].src_Y_w=size_x;
-		if (output==0) MT_Data[0].dst_Y_w=size_x << 1;
-		else MT_Data[0].dst_Y_w=size_x;
-		MT_Data[0].src_UV_w=size_x >> 1;
-		MT_Data[0].dst_UV_w=size_x >> 1;
-		return(1);
-	}
-
-	dh_UV=dh_Y>>1; 
-
-	MT_Data[0].top=true;
-	MT_Data[0].bottom=false;
-	MT_Data[0].src_Y_h_min=0;
-	MT_Data[0].src_Y_h_max=dh_Y;
-	MT_Data[0].dst_Y_h_min=0;
-	MT_Data[0].dst_Y_h_max=dh_Y;
-	MT_Data[0].src_UV_h_min=0;
-	MT_Data[0].src_UV_h_max=dh_UV;
-	MT_Data[0].dst_UV_h_min=0;
-	MT_Data[0].dst_UV_h_max=dh_Y;
-
-	i=1;
-	while (i<max)
-	{
-		MT_Data[i].top=false;
-		MT_Data[i].bottom=false;
-		MT_Data[i].src_Y_h_min=MT_Data[i-1].src_Y_h_max;
-		MT_Data[i].src_Y_h_max=MT_Data[i].src_Y_h_min+dh_Y;
-		MT_Data[i].dst_Y_h_min=MT_Data[i-1].dst_Y_h_max;
-		MT_Data[i].dst_Y_h_max=MT_Data[i].dst_Y_h_min+dh_Y;
-		MT_Data[i].src_UV_h_min=MT_Data[i-1].src_UV_h_max;
-		MT_Data[i].src_UV_h_max=MT_Data[i].src_UV_h_min+dh_UV;
-		MT_Data[i].dst_UV_h_min=MT_Data[i-1].dst_UV_h_max;
-		MT_Data[i].dst_UV_h_max=MT_Data[i].dst_UV_h_min+dh_Y;
-		i++;
-	}
-	MT_Data[max-1].bottom=true;
-	MT_Data[max-1].src_Y_h_max=size_y;
-	MT_Data[max-1].dst_Y_h_max=size_y;
-	MT_Data[max-1].src_UV_h_max=size_y >> 1;
-	MT_Data[max-1].dst_UV_h_max=size_y;
-	for (i=0; i<max; i++)
-	{
-		MT_Data[i].src_Y_w=size_x;
-		if (output==0) MT_Data[i].dst_Y_w=size_x << 1;
-		else MT_Data[i].dst_Y_w=size_x;
-		MT_Data[i].src_UV_w=size_x >> 1;
-		MT_Data[i].dst_UV_w=size_x >> 1;
-	}
-	return(max);
-}
 
 static AVS_FORCEINLINE unsigned portable_clz(size_t x)
 {
@@ -667,20 +582,23 @@ static bool generate_coeff_table_c(const generate_coeff_params &params)
 /* 8-16 bit */
 //#pragma intel optimization_parameter target_arch=sse
 template<typename T>
-static void resize_plane_c(EWAPixelCoeff *coeff, const void *src_, void* VS_RESTRICT dst_,
-    int dst_width, int dst_height, int src_stride, int dst_stride, const float ValMin, const float ValMax)
+static void resize_plane_c(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane, EWAPixelCoeff *coeff, const float ValMin, const float ValMax)
 {
-    const T* srcp = reinterpret_cast<const T*>(src_);
-    T* VS_RESTRICT dstp = reinterpret_cast<T*>(dst_);
+	const T* srcp = reinterpret_cast<const T*>(MT_DataGF.src[idxPlane]);
+    T* JincMT_RESTRICT dstp = reinterpret_cast<T*>(MT_DataGF.dst[idxPlane]);
 
-    src_stride /= sizeof(T);
-    dst_stride /= sizeof(T);
+    const int src_stride = MT_DataGF.src_pitch[idxPlane]/sizeof(T);
+    const int dst_stride = MT_DataGF.dst_pitch[idxPlane]/sizeof(T);
 
-	EWAPixelCoeffMeta *meta_y = coeff->meta;
+	const int Y_Min = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF.dst_UV_h_min : MT_DataGF.dst_Y_h_min;
+	const int Y_Max = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF.dst_UV_h_max : MT_DataGF.dst_Y_h_max;
+	const int dst_width = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF.dst_UV_w : MT_DataGF.dst_Y_w;
+
+	EWAPixelCoeffMeta *meta_y = coeff->meta + Y_Min*dst_width;
 
 	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
 
-    for (int y = 0; y < dst_height; y++)
+    for (int y = Y_Min; y < Y_Max; y++)
     {
 		EWAPixelCoeffMeta *meta = meta_y;
 
@@ -692,7 +610,7 @@ static void resize_plane_c(EWAPixelCoeff *coeff, const void *src_, void* VS_REST
 
             float result = 0.0f;
 
-            for (int ly = 0; ly < filter_size; ly++)
+/*            for (int ly = 0; ly < filter_size; ly++)
             {
                 for (int lx = 0; lx < filter_size; lx++)
                 {
@@ -700,9 +618,11 @@ static void resize_plane_c(EWAPixelCoeff *coeff, const void *src_, void* VS_REST
                 }
                 coeff_ptr += coeff_stride;
                 src_ptr += src_stride;
-            }
+            }*/
 
-            if VS_CONSTEXPR (!(std::is_same<T, float>::value))
+			result = 1.0f * (src_ptr + (filter_size >> 1)*src_stride)[filter_size >> 1];
+
+            if JincMT_CONSTEXPR (!(std::is_same<T, float>::value))
                 dstp[x] = static_cast<T>(lrintf(clamp(result, ValMin, ValMax)));
             else
                 dstp[x] = result;
@@ -715,7 +635,135 @@ static void resize_plane_c(EWAPixelCoeff *coeff, const void *src_, void* VS_REST
     }
 }
 
-void JincResize::FreeData(void)
+
+uint8_t CreateMTData(MT_Data_Info_JincResizeMT MT_Data[], uint8_t max_threads, uint8_t threads_number, int32_t src_size_x, int32_t src_size_y,
+	int32_t dst_size_x, int32_t dst_size_y, uint8_t shift_src_w_UV, uint8_t shift_src_h_UV, uint8_t shift_dst_w_UV, uint8_t shift_dst_h_UV)
+{
+
+	if ((max_threads <= 1) || (max_threads > threads_number))
+	{
+		MT_Data[0].top = true;
+		MT_Data[0].bottom = true;
+		MT_Data[0].src_Y_h_min = 0;
+		MT_Data[0].dst_Y_h_min = 0;
+		MT_Data[0].src_Y_h_max = src_size_y;
+		MT_Data[0].dst_Y_h_max = dst_size_y;
+		MT_Data[0].src_UV_h_min = 0;
+		MT_Data[0].dst_UV_h_min = 0;
+		MT_Data[0].src_UV_h_max = src_size_y >> shift_src_h_UV;
+		MT_Data[0].dst_UV_h_max = dst_size_y >> shift_dst_h_UV;
+		MT_Data[0].src_Y_w = src_size_x;
+		MT_Data[0].dst_Y_w = dst_size_x;
+		MT_Data[0].src_UV_w = src_size_x >> shift_src_w_UV;
+		MT_Data[0].dst_UV_w = dst_size_x >> shift_dst_w_UV;
+		return(1);
+	}
+
+	int32_t _y_min, _dh;
+	int32_t src_dh_Y, src_dh_UV, dst_dh_Y, dst_dh_UV;
+	int32_t h_y;
+	uint8_t i, max_src = 1, max_dst = 1, max;
+
+	dst_dh_Y = (dst_size_y + (uint32_t)max_threads - 1) / (uint32_t)max_threads;
+	if (dst_dh_Y < 16) dst_dh_Y = 16;
+	if ((dst_dh_Y & 3) != 0) dst_dh_Y = ((dst_dh_Y + 3) >> 2) << 2;
+
+	if (src_size_y == dst_size_y) src_dh_Y = dst_dh_Y;
+	else
+	{
+		src_dh_Y = (src_size_y + (uint32_t)max_threads - 1) / (uint32_t)max_threads;
+		if (src_dh_Y < 16) src_dh_Y = 16;
+		if ((src_dh_Y & 3) != 0) src_dh_Y = ((src_dh_Y + 3) >> 2) << 2;
+	}
+
+	_y_min = src_size_y;
+	_dh = src_dh_Y;
+	h_y = _dh;
+	while (h_y < (_y_min - 16))
+	{
+		max_src++;
+		h_y += _dh;
+	}
+
+	_y_min = dst_size_y;
+	_dh = dst_dh_Y;
+	h_y = _dh;
+	while (h_y < (_y_min - 16))
+	{
+		max_dst++;
+		h_y += _dh;
+	}
+
+	max = (max_src < max_dst) ? max_src : max_dst;
+
+	if (max == 1)
+	{
+		MT_Data[0].top = true;
+		MT_Data[0].bottom = true;
+		MT_Data[0].src_Y_h_min = 0;
+		MT_Data[0].dst_Y_h_min = 0;
+		MT_Data[0].src_Y_h_max = src_size_y;
+		MT_Data[0].dst_Y_h_max = dst_size_y;
+		MT_Data[0].src_UV_h_min = 0;
+		MT_Data[0].dst_UV_h_min = 0;
+		MT_Data[0].src_UV_h_max = src_size_y >> shift_src_h_UV;
+		MT_Data[0].dst_UV_h_max = dst_size_y >> shift_dst_h_UV;
+		MT_Data[0].src_Y_w = src_size_x;
+		MT_Data[0].dst_Y_w = dst_size_x;
+		MT_Data[0].src_UV_w = src_size_x >> shift_src_w_UV;
+		MT_Data[0].dst_UV_w = dst_size_x >> shift_dst_w_UV;
+		return(1);
+	}
+
+	src_dh_UV = src_dh_Y >> shift_src_h_UV;
+	dst_dh_UV = dst_dh_Y >> shift_dst_h_UV;
+
+	MT_Data[0].top = true;
+	MT_Data[0].bottom = false;
+	MT_Data[0].src_Y_h_min = 0;
+	MT_Data[0].src_Y_h_max = src_dh_Y;
+	MT_Data[0].dst_Y_h_min = 0;
+	MT_Data[0].dst_Y_h_max = dst_dh_Y;
+	MT_Data[0].src_UV_h_min = 0;
+	MT_Data[0].src_UV_h_max = src_dh_UV;
+	MT_Data[0].dst_UV_h_min = 0;
+	MT_Data[0].dst_UV_h_max = dst_dh_UV;
+
+	i = 1;
+	while (i < max)
+	{
+		MT_Data[i].top = false;
+		MT_Data[i].bottom = false;
+		MT_Data[i].src_Y_h_min = MT_Data[i - 1].src_Y_h_max;
+		MT_Data[i].src_Y_h_max = MT_Data[i].src_Y_h_min + src_dh_Y;
+		MT_Data[i].dst_Y_h_min = MT_Data[i - 1].dst_Y_h_max;
+		MT_Data[i].dst_Y_h_max = MT_Data[i].dst_Y_h_min + dst_dh_Y;
+		MT_Data[i].src_UV_h_min = MT_Data[i - 1].src_UV_h_max;
+		MT_Data[i].src_UV_h_max = MT_Data[i].src_UV_h_min + src_dh_UV;
+		MT_Data[i].dst_UV_h_min = MT_Data[i - 1].dst_UV_h_max;
+		MT_Data[i].dst_UV_h_max = MT_Data[i].dst_UV_h_min + dst_dh_UV;
+		i++;
+	}
+
+	MT_Data[max - 1].bottom = true;
+	MT_Data[max - 1].src_Y_h_max = src_size_y;
+	MT_Data[max - 1].dst_Y_h_max = dst_size_y;
+	MT_Data[max - 1].src_UV_h_max = src_size_y >> shift_src_h_UV;
+	MT_Data[max - 1].dst_UV_h_max = dst_size_y >> shift_dst_h_UV;
+
+	for (i = 0; i < max; i++)
+	{
+		MT_Data[i].src_Y_w = src_size_x;
+		MT_Data[i].dst_Y_w = dst_size_x;
+		MT_Data[i].src_UV_w = src_size_x >> shift_src_w_UV;
+		MT_Data[i].dst_UV_w = dst_size_x >> shift_dst_w_UV;
+	}
+
+	return(max);
+}
+
+
+void JincResizeMT::FreeData(void)
 {
 	for (int i=0; i<static_cast<int>(out.size()); ++i)
 	{
@@ -733,10 +781,10 @@ void JincResize::FreeData(void)
 	}
 }
 
-JincResize::JincResize(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height,
-	int quant_x, int quant_y, int tap, double blur, int opt, int range, uint8_t _threads, bool negativePrefetch, IScriptEnvironment* env)
-    : GenericVideoFilter(_child), w(target_width), h(target_height), _opt(opt), init_lut(nullptr),has_at_least_v8(false), has_at_least_v11(false),
-	avx512(false), avx2(false), sse41(false), subsampled(false), threads (_threads)
+JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height,
+	int quant_x, int quant_y, int tap, double blur, int opt, int range, uint8_t _threads, bool _sleep, bool negativePrefetch, IScriptEnvironment* env)
+    : GenericVideoFilter(_child), init_lut(nullptr),has_at_least_v8(false), has_at_least_v11(false),
+	avx512(false), avx2(false), sse41(false), subsampled(false), threads (_threads), sleep(_sleep)
 {
 	UserId = 0;
 
@@ -775,19 +823,19 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
     if (quant_y < 1 || quant_y > 256)
         env->ThrowError("JincResizeMT: quant_y must be between 1..256.");
 
-    if ((_opt > 3) || (_opt < -1))
+    if ((opt > 3) || (opt < -1))
         env->ThrowError("JincResizeMT: opt must be between -1..3.");
 
     if (blur < 0.0 || blur > 10.0)
         env->ThrowError("JincResizeMT: blur must be between 0.0..10.0.");
 
-	if ((!(env->GetCPUFlags() & CPUF_AVX512F) || !has_at_least_v8) && (_opt == 3))
+	if ((!(env->GetCPUFlags() & CPUF_AVX512F) || !has_at_least_v8) && (opt == 3))
 		env->ThrowError("JincResizeMT: opt=3 requires AVX-512F and AVS+.");
 
-	if ((!(env->GetCPUFlags() & CPUF_AVX2) || !has_at_least_v8) && (_opt == 2))
+	if ((!(env->GetCPUFlags() & CPUF_AVX2) || !has_at_least_v8) && (opt == 2))
         env->ThrowError("JincResizeMT: opt=2 requires AVX2 and AVS+.");
 
-    if (!(env->GetCPUFlags() & CPUF_SSE4_1) && (_opt == 1))
+    if (!(env->GetCPUFlags() & CPUF_SSE4_1) && (opt == 1))
         env->ThrowError("JincResizeMT: opt=1 requires SSE4.1.");
 
 	if ((range < 0) || (range > 4))
@@ -813,10 +861,10 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 	}
 
     if (crop_width <= 0.0)
-        crop_width = vi.width - crop_left + crop_width;
+        crop_width = src_width - crop_left + crop_width;
 
     if (crop_height <= 0.0)
-        crop_height = vi.height - crop_top + crop_height;
+        crop_height = src_height - crop_top + crop_height;
 
 	const int initial_capacity = max(target_width * target_height, src_width * src_height);
 	
@@ -871,13 +919,11 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 	const int shift_w = (!grey && !isRGBPfamily) ? vi.GetPlaneWidthSubsampling(PLANAR_U) : 0;
 	const int shift_h = (!grey && !isRGBPfamily) ? vi.GetPlaneHeightSubsampling(PLANAR_U) : 0;
 
-	if ((planecount > 1) && !(vi.Is444() || vi.IsRGB()))
+	if ((planecount > 1) && !(vi.Is444() || isRGBPfamily))
 	{
 
         out.emplace_back(new EWAPixelCoeff());
         subsampled = true;
-        //const int sub_w = vi.GetPlaneWidthSubsampling(PLANAR_U);
-        //const int sub_h = vi.GetPlaneHeightSubsampling(PLANAR_U);
         const double div_w = 1 << shift_w;
         const double div_h = 1 << shift_h;
 
@@ -911,9 +957,9 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 		}
 	}
 
-	avx512 = (!!(env->GetCPUFlags() & CPUF_AVX512F) && (_opt < 0) && has_at_least_v8) || (_opt == 3);
-    avx2 = (!!(env->GetCPUFlags() & CPUF_AVX2) && (_opt < 0) && has_at_least_v8) || (_opt == 2);
-    sse41 = (!!(env->GetCPUFlags() & CPUF_SSE4_1) && (_opt < 0)) || (_opt == 1);
+	avx512 = (!!(env->GetCPUFlags() & CPUF_AVX512F) && (opt < 0) && has_at_least_v8) || (opt == 3);
+    avx2 = (!!(env->GetCPUFlags() & CPUF_AVX2) && (opt < 0) && has_at_least_v8) || (opt == 2);
+    sse41 = (!!(env->GetCPUFlags() & CPUF_SSE4_1) && (opt < 0)) || (opt == 1);
 
 	uint8_t plane_range[4];
 
@@ -1070,7 +1116,8 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 		}
     }
 
-	threads_number = CreateMTData(threads_number, src_width, src_height, target_width, target_height, shift_w, shift_h);
+	threads_number = CreateMTData(MT_Data,threads_number, threads_number, src_width, src_height, target_width, target_height,
+		shift_w, shift_h, shift_w, shift_h);
 
 	if (threads_number > 1)
 	{
@@ -1097,11 +1144,11 @@ JincResize::JincResize(PClip _child, int target_width, int target_height, double
 		}
 	}
 
-	vi.width = w;
-	vi.height = h;
+	vi.width = target_width;
+	vi.height = target_height;
 }
 
-JincResize::~JincResize()
+JincResizeMT::~JincResizeMT()
 {
 	if (threads_number>1) poolInterface->RemoveUserId(UserId);
 	
@@ -1110,7 +1157,7 @@ JincResize::~JincResize()
 	if (threads>1) poolInterface->DeAllocateAllThreads(true);
 }
 
-int __stdcall JincResize::SetCacheHints(int cachehints, int frame_range)
+int __stdcall JincResizeMT::SetCacheHints(int cachehints, int frame_range)
 {
 	switch (cachehints)
 	{
@@ -1122,183 +1169,10 @@ int __stdcall JincResize::SetCacheHints(int cachehints, int frame_range)
 }
 
 
-uint8_t JincResize::CreateMTData(uint8_t max_threads, int32_t src_size_x, int32_t src_size_y, int32_t dst_size_x, int32_t dst_size_y, int UV_w, int UV_h)
-{
-	if ((max_threads <= 1) || (max_threads > threads_number))
-	{
-		MT_Data[0].top = true;
-		MT_Data[0].bottom = true;
-		MT_Data[0].src_Y_h_min = 0;
-		MT_Data[0].dst_Y_h_min = 0;
-		MT_Data[0].src_Y_h_max = src_size_y;
-		MT_Data[0].dst_Y_h_max = dst_size_y;
-		MT_Data[0].src_UV_h_min = 0;
-		MT_Data[0].dst_UV_h_min = 0;
-		if (UV_h > 0)
-		{
-			MT_Data[0].src_UV_h_max = src_size_y >> UV_h;
-			MT_Data[0].dst_UV_h_max = dst_size_y >> UV_h;
-		}
-		else
-		{
-			MT_Data[0].src_UV_h_max = src_size_y;
-			MT_Data[0].dst_UV_h_max = dst_size_y;
-		}
-		MT_Data[0].src_Y_w = src_size_x;
-		MT_Data[0].dst_Y_w = dst_size_x;
-		if (UV_w > 0)
-		{
-			MT_Data[0].src_UV_w = src_size_x >> UV_w;
-			MT_Data[0].dst_UV_w = dst_size_x >> UV_w;
-		}
-		else
-		{
-			MT_Data[0].src_UV_w = src_size_x;
-			MT_Data[0].dst_UV_w = dst_size_x;
-		}
-		return(1);
-	}
-
-	int32_t _y_min, _dh;
-	int32_t src_dh_Y, src_dh_UV, dst_dh_Y, dst_dh_UV;
-	int32_t h_y;
-	uint8_t i, max_src = 1, max_dst = 1, max;
-
-	dst_dh_Y = (dst_size_y + (uint32_t)max_threads - 1) / (uint32_t)max_threads;
-	if (dst_dh_Y < 16) dst_dh_Y = 16;
-	if ((dst_dh_Y & 3) != 0) dst_dh_Y = ((dst_dh_Y + 3) >> 2) << 2;
-
-	if (src_size_y == dst_size_y) src_dh_Y = dst_dh_Y;
-	else
-	{
-		src_dh_Y = (src_size_y + (uint32_t)max_threads - 1) / (uint32_t)max_threads;
-		if (src_dh_Y < 16) src_dh_Y = 16;
-		if ((src_dh_Y & 3) != 0) src_dh_Y = ((src_dh_Y + 3) >> 2) << 2;
-	}
-
-	_y_min = src_size_y;
-	_dh = src_dh_Y;
-	h_y = _dh;
-	while (h_y < (_y_min - 16))
-	{
-		max_src++;
-		h_y += _dh;
-	}
-
-	_y_min = dst_size_y;
-	_dh = dst_dh_Y;
-	h_y = _dh;
-	while (h_y < (_y_min - 16))
-	{
-		max_dst++;
-		h_y += _dh;
-	}
-
-	max = (max_src < max_dst) ? max_src : max_dst;
-
-	if (max == 1)
-	{
-		MT_Data[0].top = true;
-		MT_Data[0].bottom = true;
-		MT_Data[0].src_Y_h_min = 0;
-		MT_Data[0].dst_Y_h_min = 0;
-		MT_Data[0].src_Y_h_max = src_size_y;
-		MT_Data[0].dst_Y_h_max = dst_size_y;
-		MT_Data[0].src_UV_h_min = 0;
-		MT_Data[0].dst_UV_h_min = 0;
-		if (UV_h > 0)
-		{
-			MT_Data[0].src_UV_h_max = src_size_y >> UV_h;
-			MT_Data[0].dst_UV_h_max = dst_size_y >> UV_h;
-		}
-		else
-		{
-			MT_Data[0].src_UV_h_max = src_size_y;
-			MT_Data[0].dst_UV_h_max = dst_size_y;
-		}
-		MT_Data[0].src_Y_w = src_size_x;
-		MT_Data[0].dst_Y_w = dst_size_x;
-		if (UV_w > 0)
-		{
-			MT_Data[0].src_UV_w = src_size_x >> UV_w;
-			MT_Data[0].dst_UV_w = dst_size_x >> UV_w;
-		}
-		else
-		{
-			MT_Data[0].src_UV_w = src_size_x;
-			MT_Data[0].dst_UV_w = dst_size_x;
-		}
-		return(1);
-	}
-
-	src_dh_UV = (UV_h > 0) ? src_dh_Y >> UV_h : src_dh_Y;
-	dst_dh_UV = (UV_h > 0) ? dst_dh_Y >> UV_h : dst_dh_Y;
-
-	MT_Data[0].top = true;
-	MT_Data[0].bottom = false;
-	MT_Data[0].src_Y_h_min = 0;
-	MT_Data[0].src_Y_h_max = src_dh_Y;
-	MT_Data[0].dst_Y_h_min = 0;
-	MT_Data[0].dst_Y_h_max = dst_dh_Y;
-	MT_Data[0].src_UV_h_min = 0;
-	MT_Data[0].src_UV_h_max = src_dh_UV;
-	MT_Data[0].dst_UV_h_min = 0;
-	MT_Data[0].dst_UV_h_max = dst_dh_UV;
-
-	i = 1;
-	while (i < max)
-	{
-		MT_Data[i].top = false;
-		MT_Data[i].bottom = false;
-		MT_Data[i].src_Y_h_min = MT_Data[i - 1].src_Y_h_max;
-		MT_Data[i].src_Y_h_max = MT_Data[i].src_Y_h_min + src_dh_Y;
-		MT_Data[i].dst_Y_h_min = MT_Data[i - 1].dst_Y_h_max;
-		MT_Data[i].dst_Y_h_max = MT_Data[i].dst_Y_h_min + dst_dh_Y;
-		MT_Data[i].src_UV_h_min = MT_Data[i - 1].src_UV_h_max;
-		MT_Data[i].src_UV_h_max = MT_Data[i].src_UV_h_min + src_dh_UV;
-		MT_Data[i].dst_UV_h_min = MT_Data[i - 1].dst_UV_h_max;
-		MT_Data[i].dst_UV_h_max = MT_Data[i].dst_UV_h_min + dst_dh_UV;
-		i++;
-	}
-
-	MT_Data[max - 1].bottom = true;
-	MT_Data[max - 1].src_Y_h_max = src_size_y;
-	MT_Data[max - 1].dst_Y_h_max = dst_size_y;
-	if (UV_h > 0)
-	{
-		MT_Data[max - 1].src_UV_h_max = src_size_y >> UV_h;
-		MT_Data[max - 1].dst_UV_h_max = dst_size_y >> UV_h;
-	}
-	else
-	{
-		MT_Data[max - 1].src_UV_h_max = src_size_y;
-		MT_Data[max - 1].dst_UV_h_max = dst_size_y;
-	}
-
-	for (i = 0; i < max; i++)
-	{
-		MT_Data[i].src_Y_w = src_size_x;
-		MT_Data[i].dst_Y_w = dst_size_x;
-		if (UV_w > 0)
-		{
-			MT_Data[i].src_UV_w = src_size_x >> UV_w;
-			MT_Data[i].dst_UV_w = dst_size_x >> UV_w;
-		}
-		else
-		{
-			MT_Data[i].src_UV_w = src_size_x;
-			MT_Data[i].dst_UV_w = dst_size_x;
-		}
-	}
-
-	return(max);
-}
-
-
-void JincResize::StaticThreadpool(void *ptr)
+void JincResizeMT::StaticThreadpool(void *ptr)
 {
 	Public_MT_Data_Thread *data = (Public_MT_Data_Thread *)ptr;
-	JincResize *ptrClass = (JincResize *)data->pClass;
+	JincResizeMT *ptrClass = (JincResizeMT *)data->pClass;
 	MT_Data_Info_JincResizeMT *MT_DataGF = ((MT_Data_Info_JincResizeMT *)data->pData) + data->thread_Id;
 
 	switch (data->f_process)
@@ -1320,7 +1194,7 @@ void JincResize::StaticThreadpool(void *ptr)
 }
 
 
-PVideoFrame __stdcall JincResize::GetFrame(int n, IScriptEnvironment* env)
+PVideoFrame __stdcall JincResizeMT::GetFrame(int n, IScriptEnvironment* env)
 {
 	PVideoFrame src = child->GetFrame(n, env);
 	PVideoFrame dst = (has_at_least_v8) ? env->NewVideoFrameP(vi, &src) : env->NewVideoFrame(vi, 64);
@@ -1332,22 +1206,22 @@ PVideoFrame __stdcall JincResize::GetFrame(int n, IScriptEnvironment* env)
 	const int src_pitch_1 = src->GetPitch();
 	const int dst_pitch_1 = dst->GetPitch();
 	const BYTE *srcp_1 = src->GetReadPtr();
-	BYTE *dstp_1 = dst->GetWritePtr();
+	BYTE *JincMT_RESTRICT dstp_1 = dst->GetWritePtr();
 
 	const int src_pitch_2 = (!grey && !isRGBPfamily) ? src->GetPitch(PLANAR_U) : (isRGBPfamily) ? src->GetPitch(PLANAR_B) : 0;
 	const int dst_pitch_2 = (!grey && !isRGBPfamily) ? dst->GetPitch(PLANAR_U) : (isRGBPfamily) ? dst->GetPitch(PLANAR_B) : 0;
-	const BYTE *srcp_2 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? src->GetReadPtr(PLANAR_U) : (isRGBPfamily) ? src->GetReadPtr(PLANAR_B) : nullptr;
-	BYTE *dstp_2 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? dst->GetWritePtr(PLANAR_U) : (isRGBPfamily) ? dst->GetWritePtr(PLANAR_B) : nullptr;
+	const BYTE *srcp_2 = (!grey && !isRGBPfamily) ? src->GetReadPtr(PLANAR_U) : (isRGBPfamily) ? src->GetReadPtr(PLANAR_B) : nullptr;
+	BYTE *JincMT_RESTRICT dstp_2 = (!grey && !isRGBPfamily) ? dst->GetWritePtr(PLANAR_U) : (isRGBPfamily) ? dst->GetWritePtr(PLANAR_B) : nullptr;
 
-	const int src_pitch_3 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? src->GetPitch(PLANAR_V) : (isRGBPfamily) ? src->GetPitch(PLANAR_R) : 0;
-	const int dst_pitch_3 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? dst->GetPitch(PLANAR_V) : (isRGBPfamily) ? dst->GetPitch(PLANAR_R) : 0;
-	const BYTE *srcp_3 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? src->GetReadPtr(PLANAR_V) : (isRGBPfamily) ? src->GetReadPtr(PLANAR_R) : nullptr;
-	BYTE *dstp_3 = (!grey && vi.IsPlanar() && !isRGBPfamily) ? dst->GetWritePtr(PLANAR_V) : (isRGBPfamily) ? dst->GetWritePtr(PLANAR_R) : nullptr;
+	const int src_pitch_3 = (!grey && !isRGBPfamily) ? src->GetPitch(PLANAR_V) : (isRGBPfamily) ? src->GetPitch(PLANAR_R) : 0;
+	const int dst_pitch_3 = (!grey && !isRGBPfamily) ? dst->GetPitch(PLANAR_V) : (isRGBPfamily) ? dst->GetPitch(PLANAR_R) : 0;
+	const BYTE *srcp_3 = (!grey && !isRGBPfamily) ? src->GetReadPtr(PLANAR_V) : (isRGBPfamily) ? src->GetReadPtr(PLANAR_R) : nullptr;
+	BYTE *JincMT_RESTRICT dstp_3 = (!grey && !isRGBPfamily) ? dst->GetWritePtr(PLANAR_V) : (isRGBPfamily) ? dst->GetWritePtr(PLANAR_R) : nullptr;
 
 	const int src_pitch_4 = (isAlphaChannel) ? src->GetPitch(PLANAR_A) : 0;
 	const int dst_pitch_4 = (isAlphaChannel) ? dst->GetPitch(PLANAR_A) : 0;
 	const BYTE *srcp_4 = (isAlphaChannel) ? src->GetReadPtr(PLANAR_A) : nullptr;
-	BYTE *dstp_4 = (isAlphaChannel) ? dst->GetWritePtr(PLANAR_A) : nullptr;
+	BYTE *JincMT_RESTRICT dstp_4 = (isAlphaChannel) ? dst->GetWritePtr(PLANAR_A) : nullptr;
 
 	memcpy(MT_ThreadGF, MT_Thread, sizeof(MT_ThreadGF));
 	memcpy(MT_DataGF, MT_Data, sizeof(MT_Data));
@@ -1358,42 +1232,42 @@ PVideoFrame __stdcall JincResize::GetFrame(int n, IScriptEnvironment* env)
 	if (threads_number > 1)
 	{
 		if ((!poolInterface->RequestThreadPool(UserId, idxPool, threads_number, MT_ThreadGF)) || (idxPool == -1))
-			env->ThrowError("JincResizeMT: Error with the TheadPool while requesting threadpool !");
+			env->ThrowError("JincResizeMT: Error with the TheadPool while requesting threadpool!");
 	}
 
 	for (uint8_t i = 0; i < threads_number; i++)
 	{
-		MT_DataGF[i].src1 = srcp_1;
-		MT_DataGF[i].src2 = srcp_2;
-		MT_DataGF[i].src3 = srcp_3;
-		MT_DataGF[i].src4 = srcp_4;
-		MT_DataGF[i].src_pitch1 = src_pitch_1;
-		MT_DataGF[i].src_pitch2 = src_pitch_2;
-		MT_DataGF[i].src_pitch3 = src_pitch_3;
-		MT_DataGF[i].src_pitch4 = src_pitch_4;
-		MT_DataGF[i].dst1 = dstp_1 + (MT_Data[i].dst_Y_h_min*dst_pitch_1);
-		MT_DataGF[i].dst2 = dstp_2 + (MT_Data[i].dst_UV_h_min*dst_pitch_2);
-		MT_DataGF[i].dst3 = dstp_3 + (MT_Data[i].dst_UV_h_min*dst_pitch_3);
-		MT_DataGF[i].dst4 = dstp_4 + (MT_Data[i].dst_Y_h_min*dst_pitch_4);
-		MT_DataGF[i].dst_pitch1 = dst_pitch_1;
-		MT_DataGF[i].dst_pitch2 = dst_pitch_2;
-		MT_DataGF[i].dst_pitch3 = dst_pitch_3;
-		MT_DataGF[i].dst_pitch4 = dst_pitch_4;
+		MT_DataGF[i].src[0] = srcp_1;
+		MT_DataGF[i].src[1] = srcp_2;
+		MT_DataGF[i].src[2] = srcp_3;
+		MT_DataGF[i].src[3] = srcp_4;
+		MT_DataGF[i].src_pitch[0] = src_pitch_1;
+		MT_DataGF[i].src_pitch[1] = src_pitch_2;
+		MT_DataGF[i].src_pitch[2] = src_pitch_3;
+		MT_DataGF[i].src_pitch[3] = src_pitch_4;
+		MT_DataGF[i].dst[0] = dstp_1 + (MT_Data[i].dst_Y_h_min*dst_pitch_1);
+		MT_DataGF[i].dst[1] = dstp_2 + (MT_Data[i].dst_UV_h_min*dst_pitch_2);
+		MT_DataGF[i].dst[2] = dstp_3 + (MT_Data[i].dst_UV_h_min*dst_pitch_3);
+		MT_DataGF[i].dst[3] = dstp_4 + (MT_Data[i].dst_Y_h_min*dst_pitch_4);
+		MT_DataGF[i].dst_pitch[0] = dst_pitch_1;
+		MT_DataGF[i].dst_pitch[1] = dst_pitch_2;
+		MT_DataGF[i].dst_pitch[2] = dst_pitch_3;
+		MT_DataGF[i].dst_pitch[3] = dst_pitch_4;
 	}
 
-    int planes_y[4] = { PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A };
+    /*int planes_y[4] = { PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A };
     int planes_r[4] = { PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A };
-    const int* current_planes = (vi.IsYUV() || vi.IsYUVA()) ? planes_y : planes_r;
-    for (int i = 0; i < planecount; i++)
+    const int* current_planes = (vi.IsYUV() || vi.IsYUVA()) ? planes_y : planes_r;*/
+    for (uint8_t i = 0; i < (uint8_t)planecount; i++)
     {
-        const int plane = current_planes[i];
+/*        const int plane = current_planes[i];
 
         int src_stride = src->GetPitch(plane);
         int dst_stride = dst->GetPitch(plane);
         int dst_width = dst->GetRowSize(plane) / vi.ComponentSize();
         int dst_height = dst->GetHeight(plane);
         const uint8_t* srcp = src->GetReadPtr(plane);
-        uint8_t* VS_RESTRICT dstp = dst->GetWritePtr(plane);
+        uint8_t* JincMT_RESTRICT dstp = dst->GetWritePtr(plane);*/
 		
 		int i_coeff;
 		
@@ -1404,7 +1278,8 @@ PVideoFrame __stdcall JincResize::GetFrame(int n, IScriptEnvironment* env)
 		}
 		else i_coeff = 0;
 
-		process_frame(out[i_coeff],srcp,dstp,dst_width,dst_height,src_stride,dst_stride,ValMin[i],ValMax[i]);
+		process_frame(MT_DataGF[0], i, out[i_coeff], ValMin[i], ValMax[i]);
+
     }
 
     return dst;
@@ -1414,7 +1289,8 @@ AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnviro
 {
     const VideoInfo& vi = args[0].AsClip()->GetVideoInfo();
 
-	const int threads = args[13].AsInt(0);
+	//const int threads = args[13].AsInt(0);
+	const int threads = 1;
 	const bool LogicalCores = args[14].AsBool(true);
 	const bool MaxPhysCores = args[15].AsBool(true);
 	const bool SetAffinity = args[16].AsBool(false);
@@ -1485,7 +1361,7 @@ AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnviro
 		}
 	}
 
-    return new JincResize(
+    return new JincResizeMT(
         args[0].AsClip(),
         args[1].AsInt(),
         args[2].AsInt(),
@@ -1499,7 +1375,8 @@ AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnviro
         args[10].AsFloat(1.0),
         args[11].AsInt(-1),
 		args[12].AsInt(1),
-		args[13].AsInt(0),
+		threads_number,
+		sleep,
 		negativePrefetch,
         env);
 }

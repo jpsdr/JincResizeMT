@@ -4,7 +4,6 @@
 #include "JincRessizeMT.h"
 
 template <typename T>
-void resize_plane_avx2(EWAPixelCoeff *coeff, const void *src_, void* VS_RESTRICT dst_, int dst_width, int dst_height, int src_pitch, int dst_pitch,
-	const float ValMin, const float ValMax);
+void resize_plane_avx2(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane, EWAPixelCoeff *coeff, const float ValMin, const float ValMax);
 
 #endif
