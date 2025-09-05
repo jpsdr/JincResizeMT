@@ -29,6 +29,62 @@
 
 static ThreadPoolInterface *poolInterface;
 
+static bool is_paramstring_empty_or_auto(const char* param)
+{
+	if (param == nullptr) return true;
+	return (strcoll(param, "auto") == 0); // true is match
+}
+
+static bool getChromaLocation(const char* chromaloc_name, IScriptEnvironment* env, ChromaLocation_Jinc& _ChromaLocation)
+{
+	ChromaLocation_Jinc index = AVS_CHROMA_UNUSED;
+
+	if (strcoll(chromaloc_name, "left") == 0) index = AVS_CHROMA_LEFT;
+	if (strcoll(chromaloc_name, "center") == 0) index = AVS_CHROMA_CENTER;
+	if (strcoll(chromaloc_name, "topleft") == 0) index = AVS_CHROMA_TOP_LEFT;
+	if (strcoll(chromaloc_name, "top") == 0) index = AVS_CHROMA_TOP; // not used in Avisynth
+	if (strcoll(chromaloc_name, "bottom_left") == 0) index = AVS_CHROMA_BOTTOM_LEFT; // not used in Avisynth
+	if (strcoll(chromaloc_name, "bottom") == 0) index = AVS_CHROMA_BOTTOM; // not used in Avisynth
+	if (strcoll(chromaloc_name, "dv") == 0) index = AVS_CHROMA_DV; // Special to Avisynth
+	// compatibility
+	if (strcoll(chromaloc_name, "mpeg1") == 0) index = AVS_CHROMA_CENTER;
+	if (strcoll(chromaloc_name, "mpeg2") == 0) index = AVS_CHROMA_LEFT;
+	if (strcoll(chromaloc_name, "jpeg") == 0) index = AVS_CHROMA_CENTER;
+
+	if (index != AVS_CHROMA_UNUSED)
+	{
+		_ChromaLocation = index;
+		return true;
+	}
+
+	env->ThrowError("Unknown chroma placement");
+	// empty
+	return false;
+}
+
+static void chromaloc_parse_merge_with_props(const VideoInfo& vi, const char* chromaloc_name, const AVSMap* props, ChromaLocation_Jinc& _ChromaLocation, ChromaLocation_Jinc _ChromaLocation_Default, IScriptEnvironment* env)
+{
+	if (props != nullptr)
+	{
+		if (vi.Is420() || vi.Is422() || vi.IsYV411())
+		{ // yes, YV411 can also have valid _ChromaLocation, if 'left'-ish one is given
+			if (env->propNumElements(props, "_ChromaLocation") > 0)
+				_ChromaLocation_Default = (ChromaLocation_Jinc)env->propGetIntSaturated(props, "_ChromaLocation", 0, nullptr);
+		}
+		else
+		{
+			// Theoretically RGB and not subsampled formats must not have chroma location
+			if (env->propNumElements(props, "_ChromaLocation") > 0)
+			{
+				// Uncommented for a while, just ignore when there is any
+				// env->ThrowError("Error: _ChromaLocation property found at a non-subsampled source.");
+			}
+		}
+	}
+
+	if (is_paramstring_empty_or_auto(chromaloc_name) || !getChromaLocation(chromaloc_name, env, _ChromaLocation))
+		_ChromaLocation = _ChromaLocation_Default;
+}
 
 static AVS_FORCEINLINE unsigned portable_clz(size_t x)
 {
@@ -582,21 +638,25 @@ static bool generate_coeff_table_c(const generate_coeff_params &params)
 /* 8-16 bit */
 //#pragma intel optimization_parameter target_arch=sse
 template<typename T>
-static void resize_plane_c(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane, EWAPixelCoeff *coeff, const float ValMin, const float ValMax)
+static void resize_plane_c(const MT_Data_Info_JincResizeMT *MT_DataGF, const uint8_t idxPlane, const EWAPixelCoeff *coeff,
+	const float Val_Min[], const float Val_Max[])
 {
-	const T* srcp = reinterpret_cast<const T*>(MT_DataGF.src[idxPlane]);
-    T* JincMT_RESTRICT dstp = reinterpret_cast<T*>(MT_DataGF.dst[idxPlane]);
+	const T *srcp = reinterpret_cast<const T*>(MT_DataGF->src[idxPlane]);
+    T* JincMT_RESTRICT dstp = reinterpret_cast<T*>(MT_DataGF->dst[idxPlane]);
 
-    const int src_stride = MT_DataGF.src_pitch[idxPlane]/sizeof(T);
-    const int dst_stride = MT_DataGF.dst_pitch[idxPlane]/sizeof(T);
+    const ptrdiff_t src_stride = MT_DataGF->src_pitch[idxPlane]/sizeof(T);
+    const ptrdiff_t dst_stride = MT_DataGF->dst_pitch[idxPlane]/sizeof(T);
 
-	const int Y_Min = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF.dst_UV_h_min : MT_DataGF.dst_Y_h_min;
-	const int Y_Max = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF.dst_UV_h_max : MT_DataGF.dst_Y_h_max;
-	const int dst_width = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF.dst_UV_w : MT_DataGF.dst_Y_w;
+	const int Y_Min = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF->dst_UV_h_min : MT_DataGF->dst_Y_h_min;
+	const int Y_Max = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF->dst_UV_h_max : MT_DataGF->dst_Y_h_max;
+	const int dst_width = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF->dst_UV_w : MT_DataGF->dst_Y_w;
 
-	EWAPixelCoeffMeta *meta_y = coeff->meta + Y_Min*dst_width;
+	EWAPixelCoeffMeta *meta_y = coeff->meta + (Y_Min*dst_width);
 
 	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
+
+	const float ValMin = Val_Min[idxPlane];
+	const float ValMax = Val_Max[idxPlane];
 
     for (int y = Y_Min; y < Y_Max; y++)
     {
@@ -604,13 +664,12 @@ static void resize_plane_c(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane
 
         for (int x = 0; x < dst_width; x++)
         {
-            //EWAPixelCoeffMeta* meta = coeff->meta + static_cast<int64_t>(y) * dst_width + x;
-			const T *src_ptr = srcp + meta->start_y * static_cast<int64_t>(src_stride) + meta->start_x;
+			const T *src_ptr = srcp + (meta->start_y * src_stride + meta->start_x);
             const float *coeff_ptr = coeff->factor + meta->coeff_meta;
 
             float result = 0.0f;
 
-/*            for (int ly = 0; ly < filter_size; ly++)
+            for (int ly = 0; ly < filter_size; ly++)
             {
                 for (int lx = 0; lx < filter_size; lx++)
                 {
@@ -618,9 +677,9 @@ static void resize_plane_c(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane
                 }
                 coeff_ptr += coeff_stride;
                 src_ptr += src_stride;
-            }*/
+            }
 
-			result = 1.0f * (src_ptr + (filter_size >> 1)*src_stride)[filter_size >> 1];
+			//result = 1.0f * (src_ptr + (filter_size >> 1)*src_stride)[filter_size >> 1];
 
             if JincMT_CONSTEXPR (!(std::is_same<T, float>::value))
                 dstp[x] = static_cast<T>(lrintf(clamp(result, ValMin, ValMax)));
@@ -782,7 +841,8 @@ void JincResizeMT::FreeData(void)
 }
 
 JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height,
-	int quant_x, int quant_y, int tap, double blur, int opt, int range, uint8_t _threads, bool _sleep, bool negativePrefetch, IScriptEnvironment* env)
+	int quant_x, int quant_y, int tap, double blur, const char *_cplace, uint8_t _threads, int opt, int initial_capacity, bool initial_capacity_def,
+	double initial_factor, int range, bool _sleep, bool negativePrefetch, IScriptEnvironment* env)
     : GenericVideoFilter(_child), init_lut(nullptr),has_at_least_v8(false), has_at_least_v11(false),
 	avx512(false), avx2(false), sse41(false), subsampled(false), threads (_threads), sleep(_sleep)
 {
@@ -841,8 +901,19 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 	if ((range < 0) || (range > 4))
 		env->ThrowError("JincResizeMT: range allowed is [0..4].");
 
-    int src_width = vi.width;
-    int src_height = vi.height;
+	if (initial_factor < 1.0)
+		env->ThrowError("JincResizeMT: initial_factor must be >= 1.0.");
+
+	int src_width = vi.width;
+	int src_height = vi.height;
+
+	if (initial_capacity_def)
+	{
+		if (initial_capacity<0)
+			env->ThrowError("JincResizeMT: initial_capacity must be > 0.");
+	}
+	else
+		initial_capacity = max(target_width * target_height, src_width * src_height);
 
 	if ( vi.Is420() && ( ((target_width%2)!=0) || ((target_height%2)!=0) ) )
 	{
@@ -865,11 +936,37 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 
     if (crop_height <= 0.0)
         crop_height = src_height - crop_top + crop_height;
+	
+	chroma_placement = AVS_CHROMA_UNUSED;
 
-	const int initial_capacity = max(target_width * target_height, src_width * src_height);
-	
-	std::string cplace = "mpeg2";
-	
+	if (_cplace != nullptr)
+	{
+		// no format-oriented defaults
+		if (vi.IsYV411() || vi.Is420() || vi.Is422())
+		{
+			// placement explicite parameter like in ConvertToXXX or Text
+			// input frame properties, if "auto"
+			// When called from ConvertToXXX, chroma is not involved.
+			auto frame0 = _child->GetFrame(0, env);
+			const AVSMap* props = has_at_least_v11 ? env->getFramePropsRO(frame0) : nullptr;
+			chromaloc_parse_merge_with_props(vi, _cplace, props, /* ref*/chroma_placement, AVS_CHROMA_UNUSED /*default*/, env);
+		}
+	}
+
+	std::string cplace;
+
+	switch (chroma_placement)
+	{
+		case AVS_CHROMA_CENTER : cplace = "mpeg1"; break;
+		case AVS_CHROMA_LEFT : cplace = "mpeg2"; break;
+		case AVS_CHROMA_TOP_LEFT : cplace = "topleft"; break;
+		case AVS_CHROMA_UNUSED : cplace = "mpeg2"; break;
+		default : cplace = "error"; break;
+	}
+
+	if ((cplace != "mpeg2") && (cplace != "mpeg1") && (cplace != "topleft"))
+		env->ThrowError("JincResizeMT: cplace must be MPEG2, MPEG1 or topleft.");
+
 	const double radius = jinc_zeros[tap - 1];
 	const int samples = 1024;  // should be a multiple of 4
 	
@@ -885,10 +982,8 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 		env->ThrowError("JincResizeMT: Error allocating lut.");
 	}
 	init_lut->InitLut(samples, radius, blur);
-	planecount = vi.NumComponents();
-	
-	const double initial_factor = 1.50;
-	 
+	planecount = (uint8_t)vi.NumComponents();
+ 
     out.emplace_back(new EWAPixelCoeff());
     generate_coeff_params params =
     {
@@ -924,13 +1019,13 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 
         out.emplace_back(new EWAPixelCoeff());
         subsampled = true;
-        const double div_w = 1 << shift_w;
-        const double div_h = 1 << shift_h;
+        const double div_w = static_cast<double>(1 << shift_w);
+        const double div_h = static_cast<double>(1 << shift_h);
 
-        const double crop_left_uv = (cplace == "mpeg2" || cplace == "topleft") ?
-            (0.5 * (1.0 - static_cast<double>(src_width) / target_width) + crop_left) / div_w : crop_left / div_w;
+        const double crop_left_uv = ((cplace == "mpeg2") || (cplace == "topleft")) ?
+            (0.5 * (1.0 - static_cast<double>(src_width) / static_cast<double>(target_width)) + crop_left) / div_w : crop_left / div_w;
         const double crop_top_uv = (cplace == "topleft") ?
-            (0.5 * (1.0 - static_cast<double>(src_height) / target_height) + crop_top) / div_h : crop_top / div_h;
+            (0.5 * (1.0 - static_cast<double>(src_height) / static_cast<double>(target_height)) + crop_top) / div_h : crop_top / div_h;
 
         generate_coeff_params params1 = {
             init_lut,
@@ -950,7 +1045,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
             initial_capacity / (static_cast<int>(div_w) * static_cast<int>(div_h)),
             initial_factor
         };
-        if (!generate_coeff_table_c(params1))
+		if (!generate_coeff_table_c(params1))
 		{
 			FreeData();
 			env->ThrowError("JincResizeMT: Error generating coeff table [1].");
@@ -1168,6 +1263,22 @@ int __stdcall JincResizeMT::SetCacheHints(int cachehints, int frame_range)
 	}
 }
 
+void JincResizeMT::ProcessFrameMT(MT_Data_Info_JincResizeMT *MT_DataGF)
+{
+	for (uint8_t i = 0; i < planecount; i++)
+	{
+		uint8_t i_coeff;
+
+		if (subsampled)
+		{
+			if ((i == 1) || (i == 2)) i_coeff = 1;
+			else i_coeff = 0;
+		}
+		else i_coeff = 0;
+
+		process_frame(MT_DataGF, i, out[i_coeff], ValMin, ValMax);
+	}
+}
 
 void JincResizeMT::StaticThreadpool(void *ptr)
 {
@@ -1177,19 +1288,8 @@ void JincResizeMT::StaticThreadpool(void *ptr)
 
 	switch (data->f_process)
 	{
-/*	case 1: ptrClass->ResamplerLumaMT(MT_DataGF);
-		break;
-	case 2: ptrClass->ResamplerUChromaMT(MT_DataGF);
-		break;
-	case 3: ptrClass->ResamplerVChromaMT(MT_DataGF);
-		break;
-	case 4: ptrClass->ResamplerLumaMT2(MT_DataGF);
-		break;
-	case 5: ptrClass->ResamplerLumaMT3(MT_DataGF);
-		break;
-	case 6: ptrClass->ResamplerLumaMT4(MT_DataGF);
-		break;*/
-	default:;
+		case 1 : ptrClass->ProcessFrameMT(MT_DataGF); break;
+		default: break;
 	}
 }
 
@@ -1203,23 +1303,23 @@ PVideoFrame __stdcall JincResizeMT::GetFrame(int n, IScriptEnvironment* env)
 	MT_Data_Info_JincResizeMT MT_DataGF[MAX_MT_THREADS];
 	int8_t idxPool = -1;
 
-	const int src_pitch_1 = src->GetPitch();
-	const int dst_pitch_1 = dst->GetPitch();
-	const BYTE *srcp_1 = src->GetReadPtr();
-	BYTE *JincMT_RESTRICT dstp_1 = dst->GetWritePtr();
+	const ptrdiff_t src_pitch_1 = (!isRGBPfamily) ? (ptrdiff_t)src->GetPitch(PLANAR_Y) : (ptrdiff_t)src->GetPitch(PLANAR_G);
+	const ptrdiff_t dst_pitch_1 = (!isRGBPfamily) ? (ptrdiff_t)dst->GetPitch(PLANAR_Y) : (ptrdiff_t)dst->GetPitch(PLANAR_G);
+	const BYTE *srcp_1 = (!isRGBPfamily) ? src->GetReadPtr(PLANAR_Y) : src->GetReadPtr(PLANAR_G);
+	BYTE *JincMT_RESTRICT dstp_1 = (!isRGBPfamily) ? dst->GetWritePtr(PLANAR_Y) : dst->GetWritePtr(PLANAR_G);
 
-	const int src_pitch_2 = (!grey && !isRGBPfamily) ? src->GetPitch(PLANAR_U) : (isRGBPfamily) ? src->GetPitch(PLANAR_B) : 0;
-	const int dst_pitch_2 = (!grey && !isRGBPfamily) ? dst->GetPitch(PLANAR_U) : (isRGBPfamily) ? dst->GetPitch(PLANAR_B) : 0;
+	const ptrdiff_t src_pitch_2 = (!grey && !isRGBPfamily) ? (ptrdiff_t)src->GetPitch(PLANAR_U) : (isRGBPfamily) ? (ptrdiff_t)src->GetPitch(PLANAR_B) : 0;
+	const ptrdiff_t dst_pitch_2 = (!grey && !isRGBPfamily) ? (ptrdiff_t)dst->GetPitch(PLANAR_U) : (isRGBPfamily) ? (ptrdiff_t)dst->GetPitch(PLANAR_B) : 0;
 	const BYTE *srcp_2 = (!grey && !isRGBPfamily) ? src->GetReadPtr(PLANAR_U) : (isRGBPfamily) ? src->GetReadPtr(PLANAR_B) : nullptr;
 	BYTE *JincMT_RESTRICT dstp_2 = (!grey && !isRGBPfamily) ? dst->GetWritePtr(PLANAR_U) : (isRGBPfamily) ? dst->GetWritePtr(PLANAR_B) : nullptr;
 
-	const int src_pitch_3 = (!grey && !isRGBPfamily) ? src->GetPitch(PLANAR_V) : (isRGBPfamily) ? src->GetPitch(PLANAR_R) : 0;
-	const int dst_pitch_3 = (!grey && !isRGBPfamily) ? dst->GetPitch(PLANAR_V) : (isRGBPfamily) ? dst->GetPitch(PLANAR_R) : 0;
+	const ptrdiff_t src_pitch_3 = (!grey && !isRGBPfamily) ? (ptrdiff_t)src->GetPitch(PLANAR_V) : (isRGBPfamily) ? (ptrdiff_t)src->GetPitch(PLANAR_R) : 0;
+	const ptrdiff_t dst_pitch_3 = (!grey && !isRGBPfamily) ? (ptrdiff_t)dst->GetPitch(PLANAR_V) : (isRGBPfamily) ? (ptrdiff_t)dst->GetPitch(PLANAR_R) : 0;
 	const BYTE *srcp_3 = (!grey && !isRGBPfamily) ? src->GetReadPtr(PLANAR_V) : (isRGBPfamily) ? src->GetReadPtr(PLANAR_R) : nullptr;
 	BYTE *JincMT_RESTRICT dstp_3 = (!grey && !isRGBPfamily) ? dst->GetWritePtr(PLANAR_V) : (isRGBPfamily) ? dst->GetWritePtr(PLANAR_R) : nullptr;
 
-	const int src_pitch_4 = (isAlphaChannel) ? src->GetPitch(PLANAR_A) : 0;
-	const int dst_pitch_4 = (isAlphaChannel) ? dst->GetPitch(PLANAR_A) : 0;
+	const ptrdiff_t src_pitch_4 = (isAlphaChannel) ? (ptrdiff_t)src->GetPitch(PLANAR_A) : 0;
+	const ptrdiff_t dst_pitch_4 = (isAlphaChannel) ? (ptrdiff_t)dst->GetPitch(PLANAR_A) : 0;
 	const BYTE *srcp_4 = (isAlphaChannel) ? src->GetReadPtr(PLANAR_A) : nullptr;
 	BYTE *JincMT_RESTRICT dstp_4 = (isAlphaChannel) ? dst->GetWritePtr(PLANAR_A) : nullptr;
 
@@ -1255,32 +1355,32 @@ PVideoFrame __stdcall JincResizeMT::GetFrame(int n, IScriptEnvironment* env)
 		MT_DataGF[i].dst_pitch[3] = dst_pitch_4;
 	}
 
-    /*int planes_y[4] = { PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A };
-    int planes_r[4] = { PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A };
-    const int* current_planes = (vi.IsYUV() || vi.IsYUVA()) ? planes_y : planes_r;*/
-    for (uint8_t i = 0; i < (uint8_t)planecount; i++)
-    {
-/*        const int plane = current_planes[i];
+	if (threads_number > 1)
+	{
+		uint8_t f_proc=1;
 
-        int src_stride = src->GetPitch(plane);
-        int dst_stride = dst->GetPitch(plane);
-        int dst_width = dst->GetRowSize(plane) / vi.ComponentSize();
-        int dst_height = dst->GetHeight(plane);
-        const uint8_t* srcp = src->GetReadPtr(plane);
-        uint8_t* JincMT_RESTRICT dstp = dst->GetWritePtr(plane);*/
-		
-		int i_coeff;
-		
-		if (subsampled)
+		for (uint8_t i = 0; i < threads_number; i++)
+			MT_ThreadGF[i].f_process = f_proc;
+		if (poolInterface->StartThreads(UserId, idxPool)) poolInterface->WaitThreadsEnd(UserId, idxPool);
+
+		poolInterface->ReleaseThreadPool(UserId, sleep, idxPool);
+	}
+	else
+	{
+		for (uint8_t i = 0; i < planecount; i++)
 		{
-			if ((planecount==1) || (planecount==2)) i_coeff = 1;
+			uint8_t i_coeff;
+
+			if (subsampled)
+			{
+				if ((i == 1) || (i == 2)) i_coeff = 1;
+				else i_coeff = 0;
+			}
 			else i_coeff = 0;
+
+			process_frame(MT_DataGF, i, out[i_coeff], ValMin, ValMax);
 		}
-		else i_coeff = 0;
-
-		process_frame(MT_DataGF[0], i, out[i_coeff], ValMin[i], ValMax[i]);
-
-    }
+	}
 
     return dst;
 }
@@ -1289,14 +1389,16 @@ AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnviro
 {
     const VideoInfo& vi = args[0].AsClip()->GetVideoInfo();
 
-	//const int threads = args[13].AsInt(0);
-	const int threads = 1;
-	const bool LogicalCores = args[14].AsBool(true);
-	const bool MaxPhysCores = args[15].AsBool(true);
-	const bool SetAffinity = args[16].AsBool(false);
-	const bool sleep = args[17].AsBool(false);
-	int prefetch = args[18].AsInt(0);
-	int thread_level = args[19].AsInt(6);
+	const int threads = args[12].AsInt(0);
+	const bool LogicalCores = args[17].AsBool(true);
+	const bool MaxPhysCores = args[18].AsBool(true);
+	const bool SetAffinity = args[19].AsBool(false);
+	const bool sleep = args[20].AsBool(false);
+	int prefetch = args[21].AsInt(0);
+	int thread_level = args[22].AsInt(6);
+	const bool initial_capacity_def = args[14].Defined();
+	const int initial_capacity = args[14].AsInt(0);
+	const float initial_factor = (float)args[14].AsFloat(1.5f);
 
 	const bool negativePrefetch = (prefetch < 0) ? true : false;
 	prefetch = abs(prefetch);
@@ -1361,21 +1463,25 @@ AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnviro
 		}
 	}
 
-    return new JincResizeMT(
-        args[0].AsClip(),
-        args[1].AsInt(),
-        args[2].AsInt(),
-        args[3].AsFloat(0),
-        args[4].AsFloat(0),
-        args[5].AsFloat(static_cast<float>(vi.width)),
-        args[6].AsFloat(static_cast<float>(vi.height)),
-        args[7].AsInt(256),
-        args[8].AsInt(256),
-        args[9].AsInt(3),
-        args[10].AsFloat(1.0),
-        args[11].AsInt(-1),
-		args[12].AsInt(1),
+	return new JincResizeMT(
+		args[0].AsClip(),
+		args[1].AsInt(),
+		args[2].AsInt(),
+		args[3].AsFloat(0),
+		args[4].AsFloat(0),
+		args[5].AsFloat(static_cast<float>(vi.width)),
+		args[6].AsFloat(static_cast<float>(vi.height)),
+		args[7].AsInt(256),
+		args[8].AsInt(256),
+		args[9].AsInt(3),
+		args[10].AsFloat(1.0),
+		args[11].AsString("auto"),
 		threads_number,
+		args[13].AsInt(-1),
+		args[14].AsInt(0),
+		args[14].Defined(),
+		args[15].AsFloat(1.5f),
+		args[16].AsInt(1),
 		sleep,
 		negativePrefetch,
         env);
@@ -1391,8 +1497,9 @@ extern "C" __declspec(dllexport) const char* __stdcall AvisynthPluginInit3(IScri
 
 	if (!poolInterface->GetThreadPoolInterfaceStatus()) env->ThrowError("JincResizeMT: Error with the TheadPool status!");
 
-    env->AddFunction("JincResizeMT", "c[target_width]i[target_height]i[src_left]f[src_top]f[src_width]f[src_height]f[quant_x]i[quant_y]i[tap]i[blur]f[opt]i" \
-		"[range]i[threads]i[logicalCores]b[MaxPhysCore]b[SetAffinity]b[sleep]b[prefetch]i[ThreadLevel]i", Create_JincResize, 0);
+    env->AddFunction("JincResizeMT", "c[target_width]i[target_height]i[src_left]f[src_top]f[src_width]f[src_height]f[quant_x]i[quant_y]i[tap]i[blur]f" \
+		"[cplace]s[threads]i[opt]i[initial_capacity]i[initial_factor]f" \
+		"[range]i[logicalCores]b[MaxPhysCore]b[SetAffinity]b[sleep]b[prefetch]i[ThreadLevel]i", Create_JincResize, 0);
 /*
     env->AddFunction("Jinc36ResizeMT", "cii[src_left]f[src_top]f[src_width]f[src_height]f[quant_x]i[quant_y]i" \
 		"[range]i[threads]i[logicalCores]b[MaxPhysCore]b[SetAffinity]b[sleep]b[prefetch]i[ThreadLevel]i", resizer_jinc36resize<3>, 0);

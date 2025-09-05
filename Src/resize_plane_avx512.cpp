@@ -5,23 +5,24 @@
 #include "JincRessizeMT.h"
 
 template <typename T>
-void resize_plane_avx512(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane, EWAPixelCoeff *coeff, const float ValMin, const float ValMax)
+void resize_plane_avx512(const MT_Data_Info_JincResizeMT *MT_DataGF, const uint8_t idxPlane, const EWAPixelCoeff *coeff,
+	const float Val_Min[], const float Val_Max[])
 {
-	const T* src = reinterpret_cast<const T*>(MT_DataGF.src[idxPlane]);
-	T* JincMT_RESTRICT dst = reinterpret_cast<T*>(MT_DataGF.dst[idxPlane]);
+	const T* src = reinterpret_cast<const T*>(MT_DataGF->src[idxPlane]);
+	T* JincMT_RESTRICT dst = reinterpret_cast<T*>(MT_DataGF->dst[idxPlane]);
 
-	const int src_pitch = MT_DataGF.src_pitch[idxPlane] / sizeof(T);
-	const int dst_pitch = MT_DataGF.dst_pitch[idxPlane] / sizeof(T);
+	const ptrdiff_t src_pitch = (ptrdiff_t)MT_DataGF->src_pitch[idxPlane] / sizeof(T);
+	const ptrdiff_t dst_pitch = (ptrdiff_t)MT_DataGF->dst_pitch[idxPlane] / sizeof(T);
 
-	const int Y_Min = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF.dst_UV_h_min : MT_DataGF.dst_Y_h_min;
-	const int Y_Max = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF.dst_UV_h_max : MT_DataGF.dst_Y_h_max;
-	const int dst_width = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF.dst_UV_w : MT_DataGF.dst_Y_w;
+	const int Y_Min = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF->dst_UV_h_min : MT_DataGF->dst_Y_h_min;
+	const int Y_Max = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF->dst_UV_h_max : MT_DataGF->dst_Y_h_max;
+	const int dst_width = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF->dst_UV_w : MT_DataGF->dst_Y_w;
 
-	const T val_min = static_cast<T>(ValMin);
-	const T val_max = static_cast<T>(ValMax);
-	const __m512 min_val = _mm512_set1_ps(ValMin);
+	const T val_min = static_cast<T>(Val_Min[idxPlane]);
+	const T val_max = static_cast<T>(Val_Max[idxPlane]);
+	const __m512 min_val = _mm512_set1_ps(Val_Min[idxPlane]);
 
-	EWAPixelCoeffMeta *meta_y = coeff->meta + Y_Min*dst_width;
+	EWAPixelCoeffMeta *meta_y = coeff->meta + (Y_Min*dst_width);
 
 	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
 
@@ -31,7 +32,7 @@ void resize_plane_avx512(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane, 
 
 		for (int x = 0; x < dst_width; ++x)
         {
-            const T* src_ptr = src + (meta->start_y * static_cast<int64_t>(src_pitch)) + meta->start_x;
+            const T* src_ptr = src + (meta->start_y * src_pitch + meta->start_x);
             const float* coeff_ptr = coeff->factor + meta->coeff_meta;
             __m512 result = _mm512_setzero_ps();
 
@@ -103,8 +104,11 @@ void resize_plane_avx512(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane, 
 	} // for (y)
 }
 
-template void resize_plane_avx512<uint8_t>(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane, EWAPixelCoeff *coeff, const float ValMin, const float ValMax);
-template void resize_plane_avx512<uint16_t>(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane, EWAPixelCoeff *coeff, const float ValMin, const float ValMax);
-template void resize_plane_avx512<float>(MT_Data_Info_JincResizeMT MT_DataGF, uint8_t idxPlane, EWAPixelCoeff *coeff, const float ValMin, const float ValMax);
+template void resize_plane_avx512<uint8_t>(const MT_Data_Info_JincResizeMT *MT_DataGF, const uint8_t idxPlane, const EWAPixelCoeff *coeff,
+	const float Val_Min[], const float Val_Max[]);
+template void resize_plane_avx512<uint16_t>(const MT_Data_Info_JincResizeMT *MT_DataGF, const uint8_t idxPlane, const EWAPixelCoeff *coeff,
+	const float Val_Min[], const float Val_Max[]);
+template void resize_plane_avx512<float>(const MT_Data_Info_JincResizeMT *MT_DataGF, const uint8_t idxPlane, const EWAPixelCoeff *coeff,
+	const float Val_Min[], const float Val_Max[]);
 
 #endif
