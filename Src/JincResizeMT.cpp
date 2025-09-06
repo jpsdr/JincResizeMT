@@ -753,7 +753,8 @@ uint8_t CreateMTData(MT_Data_Info_JincResizeMT MT_Data[], uint8_t max_threads, u
 		h_y += _dh;
 	}
 
-	max = (max_src < max_dst) ? max_src : max_dst;
+	//max = (max_src < max_dst) ? max_src : max_dst;
+	max = max_dst;
 
 	if (max == 1)
 	{
