@@ -43,7 +43,7 @@
 #include "avs/minmax.h"
 #include "ThreadPoolInterface.h"
 
-#define JINCRESIZEMT_VERSION "JincResizeMT 1.0.0 JPSDR"
+#define JINCRESIZEMT_VERSION "JincResizeMT 1.1.0 JPSDR"
 
 #define JincMT_RESTRICT __restrict
 
@@ -69,7 +69,7 @@ typedef enum ChromaLocation_Jinc
 
 typedef struct _MT_Data_Info_JincResizeMT
 {
-	const BYTE* src[4];
+	const BYTE *src[4];
 	BYTE *JincMT_RESTRICT dst[4];
 	ptrdiff_t src_pitch[4];
 	ptrdiff_t dst_pitch[4];
@@ -89,9 +89,9 @@ struct EWAPixelCoeffMeta
 
 struct EWAPixelCoeff
 {
-    float* factor;
-    EWAPixelCoeffMeta* meta;
-    int* factor_map;
+    float *factor;
+    EWAPixelCoeffMeta *meta;
+    int *factor_map;
     int filter_size;
     int coeff_stride;
 	
@@ -106,13 +106,14 @@ class Lut
 
 public:
     Lut();
-    void InitLut(int lut_size, double radius, double blur);
+	virtual ~Lut();
+	bool InitLut(int lutsize, double radius, double blur);
     float GetFactor(int index);
 
     double* lut;
 };
 
-typedef void (*JincResizeMT_Process)(const MT_Data_Info_JincResizeMT *MT_DataGF, const uint8_t idxPlane, const EWAPixelCoeff *coeff,
+typedef void (*JincResizeMT_Process)(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
 	const float Val_Min[], const float Val_Max[]);
 
 class JincResizeMT : public GenericVideoFilter
@@ -129,7 +130,7 @@ class JincResizeMT : public GenericVideoFilter
 
 	ChromaLocation_Jinc chroma_placement;
 
-	JincResizeMT_Process process_frame;
+	JincResizeMT_Process process_frame_1x, process_frame_2x, process_frame_3x, process_frame_4x;
 
 	Public_MT_Data_Thread MT_Thread[MAX_MT_THREADS];
 	MT_Data_Info_JincResizeMT MT_Data[MAX_MT_THREADS];
@@ -141,7 +142,7 @@ class JincResizeMT : public GenericVideoFilter
 
 	static void StaticThreadpool(void *ptr);
 
-	void ProcessFrameMT(MT_Data_Info_JincResizeMT *MT_DataGF);
+	void ProcessFrameMT(MT_Data_Info_JincResizeMT *MT_DataGF, uint8_t idxFn);
 
 	void FreeData(void);
 
@@ -149,8 +150,8 @@ public:
 	JincResizeMT(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height,
 		int quant_x, int quant_y, int tap, double blur, const char *_cplace, uint8_t _threads, int opt, int initial_capacity, bool initial_capacity_def,
 		double initial_factor, int range, bool _sleep, bool negativePrefetch,IScriptEnvironment* env);
-    PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env);
-    ~JincResizeMT();
+    PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment *env);
+    virtual ~JincResizeMT();
 	int __stdcall SetCacheHints(int cachehints, int frame_range);
 };
 

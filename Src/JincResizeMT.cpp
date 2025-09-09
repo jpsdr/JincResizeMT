@@ -63,7 +63,7 @@
 
 static ThreadPoolInterface *poolInterface;
 
-static bool is_paramstring_empty_or_auto(const char* param)
+static bool is_paramstring_empty_or_auto(const char *param)
 {
 	if (param == nullptr) return true;
 	return (strcoll(param, "auto") == 0); // true is match
@@ -98,7 +98,7 @@ static bool getChromaLocation(const char *chromaloc_name, IScriptEnvironment *en
 	return false;
 }
 
-static void chromaloc_parse_merge_with_props(const VideoInfo& vi, const char* chromaloc_name, const AVSMap* props, ChromaLocation_Jinc& _ChromaLocation, ChromaLocation_Jinc _ChromaLocation_Default, IScriptEnvironment* env)
+static void chromaloc_parse_merge_with_props(const VideoInfo &vi, const char *chromaloc_name, const AVSMap *props, ChromaLocation_Jinc &_ChromaLocation, ChromaLocation_Jinc _ChromaLocation_Default, IScriptEnvironment *env)
 {
 	if (props != nullptr)
 	{
@@ -388,32 +388,44 @@ Lut::Lut() : lut_size(LUT_SIZE_VALUE)
     lut = new double[lut_size];
 }
 
-void Lut::InitLut(int lut_size, double radius, double blur)
+Lut::~Lut()
 {
-    const auto radius2 = radius * radius;
+	mydelete(lut);
+}
+
+bool Lut::InitLut(int lutsize, double radius, double blur)
+{
+	if ((lut == nullptr) || (lutsize > lut_size)) return (false);
+
+	const auto radius2 = radius * radius;
     const auto blur2 = blur * blur;
 
-    for (auto i = 0; i < lut_size; ++i)
+    for (auto i = 0; i < lutsize; ++i)
     {
-        const auto t2 = i / (lut_size - 1.0);
+        const auto t2 = i / (lutsize - 1.0);
         lut[i] = sample_sqr(jinc_sqr, radius2 * t2, blur2, radius2) * sample_sqr(jinc_sqr, JINC_ZERO_SQR * t2, 1.0, radius2);
     }
+
+	return(true);
 }
 
 float Lut::GetFactor(int index)
 {
-    if (index >= lut_size)
-        return 0.f;
+    if ((index >= lut_size) || (lut == nullptr))
+        return 0.0f;
     return static_cast<float>(lut[index]);
 }
 
 static const double DOUBLE_ROUND_MAGIC_NUMBER = 6755399441055744.0;
 
-static bool init_coeff_table(EWAPixelCoeff* out, int quantize_x, int quantize_y,
+static bool init_coeff_table(EWAPixelCoeff *out, int quantize_x, int quantize_y,
     int filter_size, int dst_width, int dst_height, int mod_align)
 {
     out->filter_size = filter_size;
-    out->coeff_stride = (filter_size + (mod_align-1)) & ~(mod_align-1);
+	if (mod_align > 0)
+		out->coeff_stride = (filter_size + (mod_align-1)) & ~(mod_align-1);
+	else
+		out->coeff_stride = filter_size;
 
     // This will be reserved to exact size in coff generating procedure
     out->factor = nullptr;
@@ -426,16 +438,15 @@ static bool init_coeff_table(EWAPixelCoeff* out, int quantize_x, int quantize_y,
     out->factor_map = new int[static_cast<int64_t>(quantize_x) * quantize_y];
 
     // Zeroed memory
-    if (out->factor_map != nullptr)
-        memset(out->factor_map, 0, static_cast<int64_t>(quantize_x) * quantize_y * sizeof(int));
-	else return(false);
+    if (out->factor_map == nullptr) return(false);
 
+	memset(out->factor_map, 0, static_cast<int64_t>(quantize_x) * quantize_y * sizeof(int));
     memset(out->meta, 0, static_cast<int64_t>(dst_width) * dst_height * sizeof(EWAPixelCoeffMeta));
 	
 	return(true);
 }
 
-static void delete_coeff_table(EWAPixelCoeff* out)
+static void delete_coeff_table(EWAPixelCoeff *out)
 {
 	myalignedfree(out->factor);
 	mydeleteT(out->factor_map);
@@ -676,25 +687,27 @@ static bool generate_coeff_table_c(const generate_coeff_params &params)
 /* 8-16 bit */
 //#pragma intel optimization_parameter target_arch=sse
 template<typename T>
-static void resize_plane_c(const MT_Data_Info_JincResizeMT *MT_DataGF, const uint8_t idxPlane, const EWAPixelCoeff *coeff,
+static void resize_plane_c_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
 	const float Val_Min[], const float Val_Max[])
 {
-	const T *srcp = reinterpret_cast<const T*>(MT_DataGF->src[idxPlane]);
-    T* JincMT_RESTRICT dstp = reinterpret_cast<T*>(MT_DataGF->dst[idxPlane]);
+	const uint8_t idx = 0;
 
-    const ptrdiff_t src_stride = MT_DataGF->src_pitch[idxPlane]/sizeof(T);
-    const ptrdiff_t dst_stride = MT_DataGF->dst_pitch[idxPlane]/sizeof(T);
+	const T *srcp = reinterpret_cast<const T*>(MT_DataGF->src[idx]);
+    T *JincMT_RESTRICT dstp = reinterpret_cast<T*>(MT_DataGF->dst[idx]);
 
-	const int Y_Min = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF->dst_UV_h_min : MT_DataGF->dst_Y_h_min;
-	const int Y_Max = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF->dst_UV_h_max : MT_DataGF->dst_Y_h_max;
-	const int dst_width = ((idxPlane == 1) || (idxPlane == 2)) ? MT_DataGF->dst_UV_w : MT_DataGF->dst_Y_w;
+    const ptrdiff_t src_stride = MT_DataGF->src_pitch[idx]/sizeof(T);
+    const ptrdiff_t dst_stride = MT_DataGF->dst_pitch[idx]/sizeof(T);
+
+	const int Y_Min = MT_DataGF->dst_Y_h_min;
+	const int Y_Max = MT_DataGF->dst_Y_h_max;
+	const int dst_width = MT_DataGF->dst_Y_w;
 
 	EWAPixelCoeffMeta *meta_y = coeff->meta + (Y_Min*dst_width);
 
 	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
 
-	const float ValMin = Val_Min[idxPlane];
-	const float ValMax = Val_Max[idxPlane];
+	const float ValMin = Val_Min[idx];
+	const float ValMax = Val_Max[idx];
 
     for (int y = Y_Min; y < Y_Max; y++)
     {
@@ -728,6 +741,291 @@ static void resize_plane_c(const MT_Data_Info_JincResizeMT *MT_DataGF, const uin
 		meta_y += dst_width;
         dstp += dst_stride;
     }
+}
+
+
+/* Planar resampling with coeff table */
+/* 8-16 bit */
+//#pragma intel optimization_parameter target_arch=sse
+template<typename T>
+static void resize_plane_c_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
+	const float Val_Min[], const float Val_Max[])
+{
+	const uint8_t idx1 = (PlaneYMode) ? 0 : 1;
+	const uint8_t idx2 = (PlaneYMode) ? 3 : 2;
+
+	const T *src1 = reinterpret_cast<const T*>(MT_DataGF->src[idx1]);
+	const T *src2 = reinterpret_cast<const T*>(MT_DataGF->src[idx2]);
+	T *JincMT_RESTRICT dst1 = reinterpret_cast<T*>(MT_DataGF->dst[idx1]);
+	T *JincMT_RESTRICT dst2 = reinterpret_cast<T*>(MT_DataGF->dst[idx2]);
+
+	const ptrdiff_t src_pitch1 = (ptrdiff_t)MT_DataGF->src_pitch[idx1] / sizeof(T);
+	const ptrdiff_t src_pitch2 = (ptrdiff_t)MT_DataGF->src_pitch[idx2] / sizeof(T);
+	const ptrdiff_t dst_pitch1 = (ptrdiff_t)MT_DataGF->dst_pitch[idx1] / sizeof(T);
+	const ptrdiff_t dst_pitch2 = (ptrdiff_t)MT_DataGF->dst_pitch[idx2] / sizeof(T);
+
+	const int Y_Min = (PlaneYMode) ? MT_DataGF->dst_Y_h_min : MT_DataGF->dst_UV_h_min;
+	const int Y_Max = (PlaneYMode) ? MT_DataGF->dst_Y_h_max : MT_DataGF->dst_UV_h_max;
+	const int dst_width = (PlaneYMode) ? MT_DataGF->dst_Y_w : MT_DataGF->dst_UV_w;
+
+	const float ValMin1 = Val_Min[idx1];
+	const float ValMin2 = Val_Min[idx2];
+	const float ValMax1 = Val_Max[idx1];
+	const float ValMax2 = Val_Max[idx2];
+
+	EWAPixelCoeffMeta *meta_y = coeff->meta + (Y_Min*dst_width);
+
+	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
+
+	for (int y = Y_Min; y < Y_Max; y++)
+	{
+		EWAPixelCoeffMeta *meta = meta_y;
+
+		for (int x = 0; x < dst_width; x++)
+		{
+			const T *src_ptr1 = src1 + (meta->start_y * src_pitch1 + meta->start_x);
+			const T *src_ptr2 = src2 + (meta->start_y * src_pitch2 + meta->start_x);
+			const float *coeff_ptr = coeff->factor + meta->coeff_meta;
+
+			float result1 = 0.0f;
+			float result2 = 0.0f;
+
+			for (int ly = 0; ly < filter_size; ly++)
+			{
+				for (int lx = 0; lx < filter_size; lx++)
+				{
+					const float cf = coeff_ptr[lx];
+
+					result1 += src_ptr1[lx] * cf;
+					result2 += src_ptr2[lx] * cf;
+				}
+				coeff_ptr += coeff_stride;
+				src_ptr1 += src_pitch1;
+				src_ptr2 += src_pitch2;
+			}
+
+			if JincMT_CONSTEXPR(!(std::is_same<T, float>::value))
+			{
+				dst1[x] = static_cast<T>(lrintf(clamp(result1, ValMin1, ValMax1)));
+				dst2[x] = static_cast<T>(lrintf(clamp(result2, ValMin2, ValMax2)));
+			}
+			else
+			{
+				dst1[x] = result1;
+				dst2[x] = result2;
+			}
+
+			meta++;
+		}
+
+		meta_y += dst_width;
+		dst1 += dst_pitch1;
+		dst2 += dst_pitch2;
+	}
+}
+
+
+/* Planar resampling with coeff table */
+/* 8-16 bit */
+//#pragma intel optimization_parameter target_arch=sse
+template<typename T>
+static void resize_plane_c_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
+	const float Val_Min[], const float Val_Max[])
+{
+	const uint8_t idx1 = 0;
+	const uint8_t idx2 = 1;
+	const uint8_t idx3 = 2;
+
+	const T *src1 = reinterpret_cast<const T*>(MT_DataGF->src[idx1]);
+	const T *src2 = reinterpret_cast<const T*>(MT_DataGF->src[idx2]);
+	const T *src3 = reinterpret_cast<const T*>(MT_DataGF->src[idx3]);
+	T *JincMT_RESTRICT dst1 = reinterpret_cast<T*>(MT_DataGF->dst[idx1]);
+	T *JincMT_RESTRICT dst2 = reinterpret_cast<T*>(MT_DataGF->dst[idx2]);
+	T *JincMT_RESTRICT dst3 = reinterpret_cast<T*>(MT_DataGF->dst[idx3]);
+
+	const ptrdiff_t src_pitch1 = (ptrdiff_t)MT_DataGF->src_pitch[idx1] / sizeof(T);
+	const ptrdiff_t src_pitch2 = (ptrdiff_t)MT_DataGF->src_pitch[idx2] / sizeof(T);
+	const ptrdiff_t src_pitch3 = (ptrdiff_t)MT_DataGF->src_pitch[idx3] / sizeof(T);
+	const ptrdiff_t dst_pitch1 = (ptrdiff_t)MT_DataGF->dst_pitch[idx1] / sizeof(T);
+	const ptrdiff_t dst_pitch2 = (ptrdiff_t)MT_DataGF->dst_pitch[idx2] / sizeof(T);
+	const ptrdiff_t dst_pitch3 = (ptrdiff_t)MT_DataGF->dst_pitch[idx3] / sizeof(T);
+
+	const int Y_Min = MT_DataGF->dst_Y_h_min;
+	const int Y_Max = MT_DataGF->dst_Y_h_max;
+	const int dst_width = MT_DataGF->dst_Y_w;
+
+	const float ValMin1 = Val_Min[idx1];
+	const float ValMin2 = Val_Min[idx2];
+	const float ValMin3 = Val_Min[idx3];
+	const float ValMax1 = Val_Max[idx1];
+	const float ValMax2 = Val_Max[idx2];
+	const float ValMax3 = Val_Max[idx3];
+
+	EWAPixelCoeffMeta *meta_y = coeff->meta + (Y_Min*dst_width);
+
+	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
+
+	for (int y = Y_Min; y < Y_Max; y++)
+	{
+		EWAPixelCoeffMeta *meta = meta_y;
+
+		for (int x = 0; x < dst_width; x++)
+		{
+			const T *src_ptr1 = src1 + (meta->start_y * src_pitch1 + meta->start_x);
+			const T *src_ptr2 = src2 + (meta->start_y * src_pitch2 + meta->start_x);
+			const T *src_ptr3 = src3 + (meta->start_y * src_pitch3 + meta->start_x);
+			const float *coeff_ptr = coeff->factor + meta->coeff_meta;
+
+			float result1 = 0.0f;
+			float result2 = 0.0f;
+			float result3 = 0.0f;
+
+			for (int ly = 0; ly < filter_size; ly++)
+			{
+				for (int lx = 0; lx < filter_size; lx++)
+				{
+					const float cf = coeff_ptr[lx];
+
+					result1 += src_ptr1[lx] * cf;
+					result2 += src_ptr2[lx] * cf;
+					result3 += src_ptr3[lx] * cf;
+				}
+				coeff_ptr += coeff_stride;
+				src_ptr1 += src_pitch1;
+				src_ptr2 += src_pitch2;
+				src_ptr3 += src_pitch3;
+			}
+
+			if JincMT_CONSTEXPR(!(std::is_same<T, float>::value))
+			{
+				dst1[x] = static_cast<T>(lrintf(clamp(result1, ValMin1, ValMax1)));
+				dst2[x] = static_cast<T>(lrintf(clamp(result2, ValMin2, ValMax2)));
+				dst3[x] = static_cast<T>(lrintf(clamp(result3, ValMin3, ValMax3)));
+			}
+			else
+			{
+				dst1[x] = result1;
+				dst2[x] = result2;
+				dst3[x] = result3;
+			}
+
+			meta++;
+		}
+
+		meta_y += dst_width;
+		dst1 += dst_pitch1;
+		dst2 += dst_pitch2;
+		dst3 += dst_pitch3;
+	}
+}
+
+
+/* Planar resampling with coeff table */
+/* 8-16 bit */
+//#pragma intel optimization_parameter target_arch=sse
+template<typename T>
+static void resize_plane_c_4x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
+	const float Val_Min[], const float Val_Max[])
+{
+	const uint8_t idx1 = 0;
+	const uint8_t idx2 = 1;
+	const uint8_t idx3 = 2;
+	const uint8_t idx4 = 3;
+
+	const T *src1 = reinterpret_cast<const T*>(MT_DataGF->src[idx1]);
+	const T *src2 = reinterpret_cast<const T*>(MT_DataGF->src[idx2]);
+	const T *src3 = reinterpret_cast<const T*>(MT_DataGF->src[idx3]);
+	const T *src4 = reinterpret_cast<const T*>(MT_DataGF->src[idx4]);
+	T *JincMT_RESTRICT dst1 = reinterpret_cast<T*>(MT_DataGF->dst[idx1]);
+	T *JincMT_RESTRICT dst2 = reinterpret_cast<T*>(MT_DataGF->dst[idx2]);
+	T *JincMT_RESTRICT dst3 = reinterpret_cast<T*>(MT_DataGF->dst[idx3]);
+	T *JincMT_RESTRICT dst4 = reinterpret_cast<T*>(MT_DataGF->dst[idx4]);
+
+	const ptrdiff_t src_pitch1 = (ptrdiff_t)MT_DataGF->src_pitch[idx1] / sizeof(T);
+	const ptrdiff_t src_pitch2 = (ptrdiff_t)MT_DataGF->src_pitch[idx2] / sizeof(T);
+	const ptrdiff_t src_pitch3 = (ptrdiff_t)MT_DataGF->src_pitch[idx3] / sizeof(T);
+	const ptrdiff_t src_pitch4 = (ptrdiff_t)MT_DataGF->src_pitch[idx4] / sizeof(T);
+	const ptrdiff_t dst_pitch1 = (ptrdiff_t)MT_DataGF->dst_pitch[idx1] / sizeof(T);
+	const ptrdiff_t dst_pitch2 = (ptrdiff_t)MT_DataGF->dst_pitch[idx2] / sizeof(T);
+	const ptrdiff_t dst_pitch3 = (ptrdiff_t)MT_DataGF->dst_pitch[idx3] / sizeof(T);
+	const ptrdiff_t dst_pitch4 = (ptrdiff_t)MT_DataGF->dst_pitch[idx4] / sizeof(T);
+
+	const int Y_Min = MT_DataGF->dst_Y_h_min;
+	const int Y_Max = MT_DataGF->dst_Y_h_max;
+	const int dst_width = MT_DataGF->dst_Y_w;
+
+	const float ValMin1 = Val_Min[idx1];
+	const float ValMin2 = Val_Min[idx2];
+	const float ValMin3 = Val_Min[idx3];
+	const float ValMin4 = Val_Min[idx4];
+	const float ValMax1 = Val_Max[idx1];
+	const float ValMax2 = Val_Max[idx2];
+	const float ValMax3 = Val_Max[idx3];
+	const float ValMax4 = Val_Max[idx4];
+
+	EWAPixelCoeffMeta *meta_y = coeff->meta + (Y_Min*dst_width);
+
+	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
+
+	for (int y = Y_Min; y < Y_Max; y++)
+	{
+		EWAPixelCoeffMeta *meta = meta_y;
+
+		for (int x = 0; x < dst_width; x++)
+		{
+			const T *src_ptr1 = src1 + (meta->start_y * src_pitch1 + meta->start_x);
+			const T *src_ptr2 = src2 + (meta->start_y * src_pitch2 + meta->start_x);
+			const T *src_ptr3 = src3 + (meta->start_y * src_pitch3 + meta->start_x);
+			const T *src_ptr4 = src4 + (meta->start_y * src_pitch4 + meta->start_x);
+			const float *coeff_ptr = coeff->factor + meta->coeff_meta;
+
+			float result1 = 0.0f;
+			float result2 = 0.0f;
+			float result3 = 0.0f;
+			float result4 = 0.0f;
+
+			for (int ly = 0; ly < filter_size; ly++)
+			{
+				for (int lx = 0; lx < filter_size; lx++)
+				{
+					const float cf = coeff_ptr[lx];
+
+					result1 += src_ptr1[lx] * cf;
+					result2 += src_ptr2[lx] * cf;
+					result3 += src_ptr3[lx] * cf;
+					result4 += src_ptr4[lx] * cf;
+				}
+				coeff_ptr += coeff_stride;
+				src_ptr1 += src_pitch1;
+				src_ptr2 += src_pitch2;
+				src_ptr3 += src_pitch3;
+				src_ptr4 += src_pitch4;
+			}
+
+			if JincMT_CONSTEXPR(!(std::is_same<T, float>::value))
+			{
+				dst1[x] = static_cast<T>(lrintf(clamp(result1, ValMin1, ValMax1)));
+				dst2[x] = static_cast<T>(lrintf(clamp(result2, ValMin2, ValMax2)));
+				dst3[x] = static_cast<T>(lrintf(clamp(result3, ValMin3, ValMax3)));
+				dst4[x] = static_cast<T>(lrintf(clamp(result4, ValMin4, ValMax4)));
+			}
+			else
+			{
+				dst1[x] = result1;
+				dst2[x] = result2;
+				dst3[x] = result3;
+				dst4[x] = result4;
+			}
+
+			meta++;
+		}
+
+		meta_y += dst_width;
+		dst1 += dst_pitch1;
+		dst2 += dst_pitch2;
+		dst3 += dst_pitch3;
+		dst4 += dst_pitch4;
+	}
 }
 
 
@@ -964,7 +1262,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
     if (crop_height <= 0.0)
         crop_height = src_height - crop_top + crop_height;
 	
-	chroma_placement = AVS_CHROMA_UNUSED;
+	chroma_placement = AVS_CHROMA_LEFT;
 
 	if (_cplace != nullptr)
 	{
@@ -985,7 +1283,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 		env->ThrowError("JincResizeMT: cplace must be MPEG2, MPEG1, topleft, auto or empty.");
 
 	const double radius = jinc_zeros[tap - 1];
-	const int samples = 1024;  // should be a multiple of 4
+	const int samples = LUT_SIZE_VALUE;  // should be a multiple of 4
 
 	//avx512 = (!!(env->GetCPUFlags() & CPUF_AVX512F) && has_at_least_v8) && ((opt < 0) || (opt == 3));
 	// AVX512 benchmarks are worse than AVX2, so for now, only allow AVX512 on request.
@@ -997,7 +1295,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 #endif
 	sse41 = (!!(env->GetCPUFlags() & CPUF_SSE4_1)) && ((opt < 0) || (opt == 1));
 
-	const int mod_align = (avx512) ? 16 : (avx2) ? 8 : (sse41) ? 4 : 1;
+	const int mod_align = (avx512) ? 16 : (avx2) ? 8 : (sse41) ? 4 : 0;
 
 	init_lut = new Lut();
 	if (init_lut == nullptr)
@@ -1005,12 +1303,12 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 		FreeData();
 		env->ThrowError("JincResizeMT: Error creating lut.");
 	}
-	if (init_lut->lut == nullptr)
+	if (!init_lut->InitLut(samples, radius, blur))
 	{
 		FreeData();
 		env->ThrowError("JincResizeMT: Error allocating lut.");
 	}
-	init_lut->InitLut(samples, radius, blur);
+
 	planecount = (uint8_t)vi.NumComponents();
  
     out.emplace_back(new EWAPixelCoeff());
@@ -1171,27 +1469,47 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 		}
 	}
 
-	if (src_height < 32) threads_number = 1;
+	if (target_height < 32) threads_number = 1;
 	else threads_number = threads;
 
     if (vi.ComponentSize() == 1)
     {
 #ifdef AVX512_BUILD_POSSIBLE
 		if (avx512)
-			process_frame = resize_plane_avx512<uint8_t>;
+		{
+			process_frame_1x = resize_plane_avx512_1x<uint8_t>;
+			process_frame_2x = resize_plane_avx512_2x<uint8_t>;
+			process_frame_3x = resize_plane_avx512_3x<uint8_t>;
+			process_frame_4x = resize_plane_avx512_4x<uint8_t>;
+		}
 		else
 #endif
 		{
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
-				process_frame = resize_plane_avx2<uint8_t>;
+			{
+				process_frame_1x = resize_plane_avx2_1x<uint8_t>;
+				process_frame_2x = resize_plane_avx2_2x<uint8_t>;
+				process_frame_3x = resize_plane_avx2_3x<uint8_t>;
+				process_frame_4x = resize_plane_avx2_4x<uint8_t>;
+			}
 			else
 #endif
 			{
 				if (sse41)
-					process_frame = resize_plane_sse41<uint8_t>;
+				{
+					process_frame_1x = resize_plane_sse41_1x<uint8_t>;
+					process_frame_2x = resize_plane_sse41_2x<uint8_t>;
+					process_frame_3x = resize_plane_sse41_3x<uint8_t>;
+					process_frame_4x = resize_plane_sse41_4x<uint8_t>;
+				}
 				else
-					process_frame = resize_plane_c<uint8_t>;
+				{
+					process_frame_1x = resize_plane_c_1x<uint8_t>;
+					process_frame_2x = resize_plane_c_2x<uint8_t>;
+					process_frame_3x = resize_plane_c_3x<uint8_t>;
+					process_frame_4x = resize_plane_c_4x<uint8_t>;
+				}
 			}
 		}
     }
@@ -1199,20 +1517,40 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
     {
 #ifdef AVX512_BUILD_POSSIBLE
 		if (avx512)
-			process_frame = resize_plane_avx512<uint16_t>;
+		{
+			process_frame_1x = resize_plane_avx512_1x<uint16_t>;
+			process_frame_2x = resize_plane_avx512_2x<uint16_t>;
+			process_frame_3x = resize_plane_avx512_3x<uint16_t>;
+			process_frame_4x = resize_plane_avx512_4x<uint16_t>;
+		}
 		else
 #endif
 		{
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
-				process_frame = resize_plane_avx2<uint16_t>;
+			{
+				process_frame_1x = resize_plane_avx2_1x<uint16_t>;
+				process_frame_2x = resize_plane_avx2_2x<uint16_t>;
+				process_frame_3x = resize_plane_avx2_3x<uint16_t>;
+				process_frame_4x = resize_plane_avx2_4x<uint16_t>;
+			}
 			else
 #endif
 			{
 				if (sse41)
-					process_frame = resize_plane_sse41<uint16_t>;
+				{
+					process_frame_1x = resize_plane_sse41_1x<uint16_t>;
+					process_frame_2x = resize_plane_sse41_2x<uint16_t>;
+					process_frame_3x = resize_plane_sse41_3x<uint16_t>;
+					process_frame_4x = resize_plane_sse41_4x<uint16_t>;
+				}
 				else
-					process_frame = resize_plane_c<uint16_t>;
+				{
+					process_frame_1x = resize_plane_c_1x<uint16_t>;
+					process_frame_2x = resize_plane_c_2x<uint16_t>;
+					process_frame_3x = resize_plane_c_3x<uint16_t>;
+					process_frame_4x = resize_plane_c_4x<uint16_t>;
+				}
 			}
 		}
     }
@@ -1220,20 +1558,40 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
     {
 #ifdef AVX512_BUILD_POSSIBLE
 		if (avx512)
-			process_frame = resize_plane_avx512<float>;
+		{
+			process_frame_1x = resize_plane_avx512_1x<float>;
+			process_frame_2x = resize_plane_avx512_2x<float>;
+			process_frame_3x = resize_plane_avx512_3x<float>;
+			process_frame_4x = resize_plane_avx512_4x<float>;
+		}
 		else
 #endif
 		{
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
-				process_frame = resize_plane_avx2<float>;
+			{
+				process_frame_1x = resize_plane_avx2_1x<float>;
+				process_frame_2x = resize_plane_avx2_2x<float>;
+				process_frame_3x = resize_plane_avx2_3x<float>;
+				process_frame_4x = resize_plane_avx2_4x<float>;
+			}
 			else
 #endif
 			{
 				if (sse41)
-					process_frame = resize_plane_sse41<float>;
+				{
+					process_frame_1x = resize_plane_sse41_1x<float>;
+					process_frame_2x = resize_plane_sse41_2x<float>;
+					process_frame_3x = resize_plane_sse41_3x<float>;
+					process_frame_4x = resize_plane_sse41_4x<float>;
+				}
 				else
-					process_frame = resize_plane_c<float>;
+				{
+					process_frame_1x = resize_plane_c_1x<float>;
+					process_frame_2x = resize_plane_c_2x<float>;
+					process_frame_3x = resize_plane_c_3x<float>;
+					process_frame_4x = resize_plane_c_4x<float>;
+				}
 			}
 		}
     }
@@ -1290,10 +1648,29 @@ int __stdcall JincResizeMT::SetCacheHints(int cachehints, int frame_range)
 	}
 }
 
-void JincResizeMT::ProcessFrameMT(MT_Data_Info_JincResizeMT *MT_DataGF)
+void JincResizeMT::ProcessFrameMT(MT_Data_Info_JincResizeMT *MT_DataGF, uint8_t IdxFn)
 {
-	for (uint8_t i = 0; i < planecount; i++)
-		process_frame(MT_DataGF, i, out[(subsampled && ((i == 1) || (i == 2))) ? 1 : 0], ValMin, ValMax);
+	switch (IdxFn)
+	{
+		case 1 : // Y (Grey)
+			process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
+			break;
+		case 2 : // RGB or YUV not subsampled
+			process_frame_3x(MT_DataGF, true, out[0], ValMin, ValMax);
+			break;
+		case 3 : // RGBA or YUVA not subsampled
+			process_frame_4x(MT_DataGF, true, out[0], ValMin, ValMax);
+			break;
+		case 4 : // YUV subsampled
+			process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
+			process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
+			break;
+		case 5 : // YUVA subsampled
+			process_frame_2x(MT_DataGF, true, out[0], ValMin, ValMax);
+			process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
+			break;
+		default : break;
+	}
 }
 
 void JincResizeMT::StaticThreadpool(void *ptr)
@@ -1302,11 +1679,7 @@ void JincResizeMT::StaticThreadpool(void *ptr)
 	JincResizeMT *ptrClass = (JincResizeMT *)data->pClass;
 	MT_Data_Info_JincResizeMT *MT_DataGF = ((MT_Data_Info_JincResizeMT *)data->pData) + data->thread_Id;
 
-	switch (data->f_process)
-	{
-		case 1 : ptrClass->ProcessFrameMT(MT_DataGF); break;
-		default: break;
-	}
+	ptrClass->ProcessFrameMT(MT_DataGF, data->f_process);
 }
 
 
@@ -1371,10 +1744,25 @@ PVideoFrame __stdcall JincResizeMT::GetFrame(int n, IScriptEnvironment* env)
 		MT_DataGF[i].dst_pitch[3] = dst_pitch_4;
 	}
 
+	uint8_t f_proc = 0;
+
+	if (subsampled)
+	{
+		if (isAlphaChannel) f_proc = 5;
+		else f_proc = 4;
+	}
+	else
+	{
+		if (grey) f_proc = 1;
+		else
+		{
+			if (isAlphaChannel) f_proc = 3;
+			else f_proc = 2;
+		}
+	}
+
 	if (threads_number > 1)
 	{
-		uint8_t f_proc=1;
-
 		for (uint8_t i = 0; i < threads_number; i++)
 			MT_ThreadGF[i].f_process = f_proc;
 		if (poolInterface->StartThreads(UserId, idxPool)) poolInterface->WaitThreadsEnd(UserId, idxPool);
@@ -1383,8 +1771,27 @@ PVideoFrame __stdcall JincResizeMT::GetFrame(int n, IScriptEnvironment* env)
 	}
 	else
 	{
-		for (uint8_t i = 0; i < planecount; i++)
-			process_frame(MT_DataGF, i, out[(subsampled && ((i == 1) || (i == 2))) ? 1:0], ValMin, ValMax);
+		switch (f_proc)
+		{
+			case 1: // Y (Grey)
+				process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
+				break;
+			case 2: // RGB or YUV not subsampled
+				process_frame_3x(MT_DataGF, true, out[0], ValMin, ValMax);
+				break;
+			case 3: // RGBA or YUVA not subsampled
+				process_frame_4x(MT_DataGF, true, out[0], ValMin, ValMax);
+				break;
+			case 4: // YUV subsampled
+				process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
+				process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
+				break;
+			case 5: // YUVA subsampled]
+				process_frame_2x(MT_DataGF, true, out[0], ValMin, ValMax);
+				process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
+				break;
+			default: break;
+		}
 	}
 
 	if (has_at_least_v11)
