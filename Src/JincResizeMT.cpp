@@ -66,26 +66,26 @@ static ThreadPoolInterface *poolInterface;
 static bool is_paramstring_empty_or_auto(const char *param)
 {
 	if (param == nullptr) return true;
-	return (strcoll(param, "auto") == 0); // true is match
+	return (_stricmp(param, "auto") == 0); // true is match
 }
 
 static bool getChromaLocation(const char *chromaloc_name, IScriptEnvironment *env, ChromaLocation_Jinc &_ChromaLocation)
 {
 	ChromaLocation_Jinc index = AVS_CHROMA_UNUSED;
 
-	if (strcoll(chromaloc_name, "left") == 0) index = AVS_CHROMA_LEFT;
-	if (strcoll(chromaloc_name, "center") == 0) index = AVS_CHROMA_CENTER;
-	if ((strcoll(chromaloc_name, "top_left") == 0) || (strcoll(chromaloc_name, "topleft") == 0))
+	if (_stricmp(chromaloc_name, "left") == 0) index = AVS_CHROMA_LEFT;
+	if (_stricmp(chromaloc_name, "center") == 0) index = AVS_CHROMA_CENTER;
+	if ((_stricmp(chromaloc_name, "top_left") == 0) || (_stricmp(chromaloc_name, "topleft") == 0))
 		index = AVS_CHROMA_TOP_LEFT;
-	if (strcoll(chromaloc_name, "top") == 0) index = AVS_CHROMA_TOP; // not used in Avisynth
-	if ((strcoll(chromaloc_name, "bottom_left") == 0) || (strcoll(chromaloc_name, "bottomleft") == 0))
+	if (_stricmp(chromaloc_name, "top") == 0) index = AVS_CHROMA_TOP; // not used in Avisynth
+	if ((_stricmp(chromaloc_name, "bottom_left") == 0) || (_stricmp(chromaloc_name, "bottomleft") == 0))
 		index = AVS_CHROMA_BOTTOM_LEFT; // not used in Avisynth
-	if (strcoll(chromaloc_name, "bottom") == 0) index = AVS_CHROMA_BOTTOM; // not used in Avisynth
-	if (strcoll(chromaloc_name, "dv") == 0) index = AVS_CHROMA_DV; // Special to Avisynth
+	if (_stricmp(chromaloc_name, "bottom") == 0) index = AVS_CHROMA_BOTTOM; // not used in Avisynth
+	if (_stricmp(chromaloc_name, "dv") == 0) index = AVS_CHROMA_DV; // Special to Avisynth
 	// compatibility
-	if (strcoll(chromaloc_name, "mpeg1") == 0) index = AVS_CHROMA_CENTER;
-	if (strcoll(chromaloc_name, "mpeg2") == 0) index = AVS_CHROMA_LEFT;
-	if (strcoll(chromaloc_name, "jpeg") == 0) index = AVS_CHROMA_CENTER;
+	if (_stricmp(chromaloc_name, "mpeg1") == 0) index = AVS_CHROMA_CENTER;
+	if (_stricmp(chromaloc_name, "mpeg2") == 0) index = AVS_CHROMA_LEFT;
+	if (_stricmp(chromaloc_name, "jpeg") == 0) index = AVS_CHROMA_CENTER;
 
 	if (index != AVS_CHROMA_UNUSED)
 	{
@@ -1225,11 +1225,21 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
     if (blur < 0.0 || blur > 10.0)
         env->ThrowError("JincResizeMT: blur must be between 0.0..10.0.");
 
-	if ((!(env->GetCPUFlags() & CPUF_AVX512F) || !has_at_least_v8) && (opt == 3))
-		env->ThrowError("JincResizeMT: opt=3 requires AVX-512F and AVS+.");
-	if ((!(env->GetCPUFlags() & CPUF_AVX2) || !has_at_least_v8) && (opt == 2))
-        env->ThrowError("JincResizeMT: opt=2 requires AVX2 and AVS+.");
-    if (!(env->GetCPUFlags() & CPUF_SSE4_1) && (opt == 1))
+	// Detection of AVX512 doesn't exist on AVS 2.6, so can't be checked.
+	// Just can check at least AVX2, if there is not even AVX2, there is not AVX512.
+	if (has_at_least_v8)
+	{
+		if ((!(env->GetCPUFlags() & CPUF_AVX512F)) && (opt == 3))
+			env->ThrowError("JincResizeMT: opt=3 requires AVX-512F.");
+	}
+	else
+	{
+		if ((!(env->GetCPUFlags() & CPUF_AVX2)) && (opt == 3))
+			env->ThrowError("JincResizeMT: opt=3 requires AVX-512F, there is not even AVX2.");
+	}
+	if ((!(env->GetCPUFlags() & CPUF_AVX2)) && (opt == 2))
+        env->ThrowError("JincResizeMT: opt=2 requires AVX2.");
+    if ((!(env->GetCPUFlags() & CPUF_SSE4_1)) && (opt == 1))
         env->ThrowError("JincResizeMT: opt=1 requires SSE4.1.");
 
 	if ((range < 0) || (range > 4))
@@ -1243,7 +1253,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 
 	if (initial_capacity_def)
 	{
-		if (initial_capacity<0)
+		if (initial_capacity<=0)
 			env->ThrowError("JincResizeMT: initial_capacity must be > 0.");
 	}
 	else
@@ -1262,38 +1272,37 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
     if (crop_height <= 0.0)
         crop_height = src_height - crop_top + crop_height;
 	
-	chroma_placement = AVS_CHROMA_LEFT;
+	planecount = (uint8_t)vi.NumComponents();
+	if ((planecount > 1) && !(vi.Is444() || isRGBPfamily)) subsampled = true;
+	
+	chroma_placement = AVS_CHROMA_UNUSED;
 
-	if (_cplace != nullptr)
+	if (subsampled)
 	{
-		// no format-oriented defaults
-		if (vi.IsYV411() || vi.Is420() || vi.Is422())
-		{
-			// placement explicite parameter like in ConvertToXXX or Text
-			// input frame properties, if "auto"
-			// When called from ConvertToXXX, chroma is not involved.
-			auto frame0 = _child->GetFrame(0, env);
-			const AVSMap* props = has_at_least_v11 ? env->getFramePropsRO(frame0) : nullptr;
-			chromaloc_parse_merge_with_props(vi, _cplace, props, /* ref*/chroma_placement, AVS_CHROMA_LEFT /*default*/, env);
-		}
-	}
+		// placement explicite parameter like in ConvertToXXX or Text
+		// input frame properties, if "auto"
+		// When called from ConvertToXXX, chroma is not involved.
+		auto frame0 = _child->GetFrame(0, env);
+		const AVSMap* props = has_at_least_v11 ? env->getFramePropsRO(frame0) : nullptr;
+		chromaloc_parse_merge_with_props(vi, _cplace, props, /* ref*/chroma_placement, AVS_CHROMA_LEFT /*default*/, env);
 
-	if ((chroma_placement != AVS_CHROMA_LEFT) && (chroma_placement != AVS_CHROMA_CENTER)
-		&& (chroma_placement != AVS_CHROMA_TOP_LEFT))
-		env->ThrowError("JincResizeMT: cplace must be MPEG2, MPEG1, topleft, auto or empty.");
+		if ((chroma_placement != AVS_CHROMA_LEFT) && (chroma_placement != AVS_CHROMA_CENTER)
+			&& (chroma_placement != AVS_CHROMA_TOP_LEFT))
+			env->ThrowError("JincResizeMT: cplace must be MPEG2, MPEG1, topleft/top_left, auto or empty.");
+	}
 
 	const double radius = jinc_zeros[tap - 1];
 	const int samples = LUT_SIZE_VALUE;  // should be a multiple of 4
 
-	//avx512 = (!!(env->GetCPUFlags() & CPUF_AVX512F) && has_at_least_v8) && ((opt < 0) || (opt == 3));
 	// AVX512 benchmarks are worse than AVX2, so for now, only allow AVX512 on request.
 #ifdef AVX512_BUILD_POSSIBLE
-	avx512 = (!!(env->GetCPUFlags() & CPUF_AVX512F) && has_at_least_v8) && (opt == 3);
+	//avx512 = ((!!(env->GetCPUFlags() & CPUF_AVX512F)) && (opt < 0)) || (opt == 3);
+	avx512 = (opt == 3);
 #endif
 #ifdef AVX2_BUILD_POSSIBLE
-	avx2 = (!!(env->GetCPUFlags() & CPUF_AVX2) && has_at_least_v8) && ((opt < 0) || (opt == 2));
+	avx2 = ((!!(env->GetCPUFlags() & CPUF_AVX2)) && (opt < 0)) || (opt == 2);
 #endif
-	sse41 = (!!(env->GetCPUFlags() & CPUF_SSE4_1)) && ((opt < 0) || (opt == 1));
+	sse41 = ((!!(env->GetCPUFlags() & CPUF_SSE4_1)) && (opt < 0)) || (opt == 1);
 
 	const int mod_align = (avx512) ? 16 : (avx2) ? 8 : (sse41) ? 4 : 0;
 
@@ -1309,8 +1318,6 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 		env->ThrowError("JincResizeMT: Error allocating lut.");
 	}
 
-	planecount = (uint8_t)vi.NumComponents();
- 
     out.emplace_back(new EWAPixelCoeff());
     generate_coeff_params params =
     {
@@ -1342,11 +1349,10 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 	const int shift_w = (!grey && !isRGBPfamily) ? vi.GetPlaneWidthSubsampling(PLANAR_U) : 0;
 	const int shift_h = (!grey && !isRGBPfamily) ? vi.GetPlaneHeightSubsampling(PLANAR_U) : 0;
 
-	if ((planecount > 1) && !(vi.Is444() || isRGBPfamily))
+	if (subsampled)
 	{
 
         out.emplace_back(new EWAPixelCoeff());
-        subsampled = true;
         const double div_w = static_cast<double>(1 << shift_w);
         const double div_h = static_cast<double>(1 << shift_h);
 
@@ -1794,7 +1800,7 @@ PVideoFrame __stdcall JincResizeMT::GetFrame(int n, IScriptEnvironment* env)
 		}
 	}
 
-	if (has_at_least_v11)
+	if (subsampled && has_at_least_v11)
 		env->propSetInt(env->getFramePropsRW(dst), "_ChromaLocation", chroma_placement, 0);
 
     return dst;
