@@ -286,7 +286,7 @@ static double jinc_sqr_boost_l(double x2)
     return (sqrt(xp / M_PI) * 2.0 / y2) * (evaluate_rational(bPC, bQC, y2p, 7) * (sx - cx) + (8.0 / xp) * evaluate_rational(bPS, bQS, y2p, 7) * (sx + cx));
 }
 
-
+#ifndef C17_ENABLE
 #define MAX_TERMS 50
 static double bessel_j1(double x)
 {
@@ -313,6 +313,7 @@ static double bessel_j1(double x)
 	
     return sum;
 }
+#endif
 
 
 // jinc(sqrt(x2))
@@ -417,7 +418,7 @@ float Lut::GetFactor(int index)
     return static_cast<float>(lut[index]);
 }
 
-static const double DOUBLE_ROUND_MAGIC_NUMBER = 6755399441055744.0;
+//static const double DOUBLE_ROUND_MAGIC_NUMBER = 6755399441055744.0;
 
 static bool init_coeff_table(EWAPixelCoeff *out, int quantize_x, int quantize_y,
     int filter_size, int dst_width, int dst_height, int mod_align)
