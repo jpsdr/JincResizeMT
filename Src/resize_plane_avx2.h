@@ -35,7 +35,7 @@
 #ifndef __JincResize_AVX2_H__
 #define __JincResize_AVX2_H__
 
-#include "JincRessizeMT.h"
+#include "JincResizeMT.h"
 
 template <typename T>
 void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,

@@ -20,7 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Src\avisynth.h" />
-    <ClInclude Include="..\Src\JincRessizeMT.h" />
+    <ClInclude Include="..\Src\JincResizeMT.h" />
     <ClInclude Include="..\Src\resize_plane_avx2.h" />
     <ClInclude Include="..\Src\resize_plane_avx512.h" />
     <ClInclude Include="..\Src\resize_plane_sse41.h" />

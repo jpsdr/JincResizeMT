@@ -33,6 +33,7 @@
 // import and export plugins, or graphical user interfaces.
 
 #include <cmath>
+#include "avs/minmax.h"
 
 // VS 2013
 #if _MSC_VER >= 1800
@@ -45,7 +46,7 @@
 #define C17_ENABLE
 #endif
 
-#include "JincRessizeMT.h"
+#include "JincResizeMT.h"
 #include "resize_plane_sse41.h"
 
 #ifdef AVX2_BUILD_POSSIBLE
@@ -69,9 +70,9 @@ static bool is_paramstring_empty_or_auto(const char *param)
 	return (_stricmp(param, "auto") == 0); // true is match
 }
 
-static bool getChromaLocation(const char *chromaloc_name, IScriptEnvironment *env, ChromaLocation_Jinc &_ChromaLocation)
+static bool getChromaLocation(const char *chromaloc_name, IScriptEnvironment *env, ChromaLocation_e &_ChromaLocation)
 {
-	ChromaLocation_Jinc index = AVS_CHROMA_UNUSED;
+	ChromaLocation_e index = AVS_CHROMA_UNUSED;
 
 	if (_stricmp(chromaloc_name, "left") == 0) index = AVS_CHROMA_LEFT;
 	if (_stricmp(chromaloc_name, "center") == 0) index = AVS_CHROMA_CENTER;
@@ -98,14 +99,14 @@ static bool getChromaLocation(const char *chromaloc_name, IScriptEnvironment *en
 	return false;
 }
 
-static void chromaloc_parse_merge_with_props(const VideoInfo &vi, const char *chromaloc_name, const AVSMap *props, ChromaLocation_Jinc &_ChromaLocation, ChromaLocation_Jinc _ChromaLocation_Default, IScriptEnvironment *env)
+static void chromaloc_parse_merge_with_props(const VideoInfo &vi, const char *chromaloc_name, const AVSMap *props, ChromaLocation_e &_ChromaLocation, ChromaLocation_e _ChromaLocation_Default, IScriptEnvironment *env)
 {
 	if (props != nullptr)
 	{
 		if (vi.Is420() || vi.Is422() || vi.IsYV411())
 		{ // yes, YV411 can also have valid _ChromaLocation, if 'left'-ish one is given
 			if (env->propNumElements(props, "_ChromaLocation") > 0)
-				_ChromaLocation_Default = (ChromaLocation_Jinc)env->propGetIntSaturated(props, "_ChromaLocation", 0, nullptr);
+				_ChromaLocation_Default = (ChromaLocation_e)env->propGetIntSaturated(props, "_ChromaLocation", 0, nullptr);
 		}
 		else
 		{

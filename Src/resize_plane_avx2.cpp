@@ -36,7 +36,8 @@
 #if _MSC_VER >= 1800
 
 #include <immintrin.h>
-#include "JincRessizeMT.h"
+#include "avs/minmax.h"
+#include "JincResizeMT.h"
 
 template <typename T>
 void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,

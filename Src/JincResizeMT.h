@@ -40,7 +40,6 @@
 #include <immintrin.h>
 
 #include "avisynth.h"
-#include "avs/minmax.h"
 #include "ThreadPoolInterface.h"
 
 #define JINCRESIZEMT_VERSION "JincResizeMT 1.1.0 JPSDR"
@@ -54,7 +53,9 @@
 #define JincMT_CONSTEXPR
 #endif
 
-typedef enum ChromaLocation_Jinc
+#ifndef __CHROMALOCATION__
+#define __CHROMALOCATION__
+typedef enum _ChromaLocation_e
 {
 	AVS_CHROMA_UNUSED = -1,
 	AVS_CHROMA_LEFT = 0,
@@ -64,8 +65,8 @@ typedef enum ChromaLocation_Jinc
 	AVS_CHROMA_BOTTOM_LEFT = 4,
 	AVS_CHROMA_BOTTOM = 5,
 	AVS_CHROMA_DV = 6 // Special to Avisynth
-} ChromaLocation_Jinc;
-
+} ChromaLocation_e;
+#endif
 
 typedef struct _MT_Data_Info_JincResizeMT
 {
@@ -128,7 +129,7 @@ class JincResizeMT : public GenericVideoFilter
 	bool subsampled;
     float ValMin[4],ValMax[4];
 
-	ChromaLocation_Jinc chroma_placement;
+	ChromaLocation_e chroma_placement;
 
 	JincResizeMT_Process process_frame_1x, process_frame_2x, process_frame_3x, process_frame_4x;
 
