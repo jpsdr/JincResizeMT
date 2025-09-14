@@ -12,7 +12,7 @@ Several new parameters are added at the end of all the parameters.
 JincResizeMT(clip, int target_width, int target_height, float src_left, float src_top, float src_width,
   float src_height, int quant_x, int quant_y, int tap, float blur, string cplace, int threads,
   int opt, int initial_capacity, float initial_factor,
-  int range, bool logicalCores,bool MaxPhysCore, bool SetAffinity,bool sleep,int prefetch,int ThreadLevel)
+  int range, bool logicalCores, bool MaxPhysCore, bool SetAffinity, bool sleep, int prefetch, int ThreadLevel)
 )
 
 ------------------------------
@@ -26,7 +26,7 @@ JincResizeMT(clip, int target_width, int target_height, float src_left, float sr
 Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_width, int target_height,
   float src_left, float src_top, float src_width, float src_height, int quant_x, int quant_y,
   string cplace, int threads,
-  int range, bool logicalCores,bool MaxPhysCore, bool SetAffinity,bool sleep,int prefetch,int ThreadLevel)
+  int range, bool logicalCores, bool MaxPhysCore, bool SetAffinity, bool sleep, int prefetch, int ThreadLevel)
 
 ------------------------------
 
