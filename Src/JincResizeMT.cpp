@@ -2343,7 +2343,7 @@ AVSValue __cdecl Create_UserDefined4(AVSValue args, void* user_data, IScriptEnvi
 		k11,
 		k21,
 		support,
-		args[18].AsInt(1), // range
+		args[16].AsInt(1), // range
 		sleep,
 		negativePrefetch,
 		env);
