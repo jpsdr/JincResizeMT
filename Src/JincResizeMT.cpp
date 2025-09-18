@@ -609,6 +609,7 @@ struct generate_coeff_params
 	float k20;
 	float k11;
 	float k21;
+	EWAPixelCoeff *out_fp16;
 };
 
 #ifndef C17_ENABLE
@@ -841,6 +842,367 @@ static bool generate_coeff_table_c(const generate_coeff_params &params)
 }
 
 
+/* Coefficient table generation for fp32 and fp16*/
+static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
+{
+	Lut* func = params.func;
+	EWAPixelCoeff* out = params.out;
+	EWAPixelCoeff* out_fp16 = params.out_fp16;
+	int quantize_x = params.quantize_x;
+	int quantize_y = params.quantize_y;
+	int samples = params.samples;
+	int src_width = params.src_width;
+	int src_height = params.src_height;
+	int dst_width = params.dst_width;
+	int dst_height = params.dst_height;
+	double radius = params.radius;
+	int mod_align = params.mod_align;
+
+	const float k10 = params.k10;
+	const float k20 = params.k20;
+	const float k11 = params.k11;
+	const float k21 = params.k21;
+	SP_KERNEL_TYPE kernel_type = params.kernel_type;
+
+	const double filter_step_x = min(static_cast<double>(dst_width) / params.crop_width, 1.0);
+	const double filter_step_y = min(static_cast<double>(dst_height) / params.crop_height, 1.0);
+
+	const float filter_support_x = static_cast<float>(radius / filter_step_x);
+	const float filter_support_y = static_cast<float>(radius / filter_step_y);
+
+	const float filter_support = max(filter_support_x, filter_support_y);
+	const int filter_size = max(static_cast<int>(ceil(filter_support_x * 2.0)), static_cast<int>(ceil(filter_support_y * 2.0)));
+
+	const float start_x = static_cast<float>(params.crop_left + (params.crop_width / dst_width - 1.0) / 2.0);
+
+	const float x_step = static_cast<float>(params.crop_width / dst_width);
+	const float y_step = static_cast<float>(params.crop_height / dst_height);
+
+	float xpos = start_x;
+	float ypos = static_cast<float>(params.crop_top + (params.crop_height - dst_height) / (dst_height * static_cast<int64_t>(2)));
+
+	// Initialize EWAPixelCoeff data structure
+	if (!init_coeff_table(out, quantize_x, quantize_y, filter_size, dst_width, dst_height, mod_align)) return(false);
+
+	if (out_fp16 != 0)
+	{
+		if (!init_coeff_table(out_fp16, quantize_x, quantize_y, filter_size, dst_width, dst_height, mod_align)) return(false);
+		out_fp16->coeff_stride /= 2; // for 16bit samples
+	}
+
+	size_t tmp_array_capacity = params.initial_capacity;
+	float* tmp_array = static_cast<float*>(_aligned_malloc(tmp_array_capacity * sizeof(float), 64));
+	if (tmp_array == nullptr) return(false);
+	size_t tmp_array_size = 0;
+	int tmp_array_top = 0;
+	unsigned base_clz = portable_clz(tmp_array_capacity);
+	const double initial_growth_factor = params.initial_factor;
+
+	size_t tmp_array_fp16_capacity = params.initial_capacity;
+	float* tmp_array_fp16 = static_cast<float*>(_aligned_malloc(tmp_array_fp16_capacity * sizeof(float), 64));
+	if (tmp_array_fp16 == nullptr) return(false);
+	size_t tmp_array_fp16_size = 0;
+	int tmp_array_fp16_top = 0;
+	unsigned base_clz_fp16 = portable_clz(tmp_array_fp16_capacity);
+
+	const double radius2 = radius * radius;
+
+	// Use to advance the coeff pointer
+	const int coeff_per_pixel = out->coeff_stride * filter_size;
+	const int coeff_per_pixel_fp16 = out_fp16->coeff_stride * filter_size;
+
+	for (int y = 0; y < dst_height; ++y)
+	{
+		for (int x = 0; x < dst_width; ++x)
+		{
+			bool is_border = false;
+
+			EWAPixelCoeffMeta* meta = &out->meta[y * dst_width + x];
+			EWAPixelCoeffMeta* meta_fp16 = &out_fp16->meta[y * dst_width + x];
+
+			// Here, the window_*** variable specified a begin/size/end
+			// of EWA window to process.
+			int window_end_x = static_cast<int>(xpos + filter_support);
+			int window_end_y = static_cast<int>(ypos + filter_support);
+
+			if (window_end_x >= src_width)
+			{
+				window_end_x = src_width - 1;
+				is_border = true;
+			}
+			if (window_end_y >= src_height)
+			{
+				window_end_y = src_height - 1;
+				is_border = true;
+			}
+
+			int window_begin_x = window_end_x - filter_size + 1;
+			int window_begin_y = window_end_y - filter_size + 1;
+
+			if (window_begin_x < 0)
+			{
+				window_begin_x = 0;
+				is_border = true;
+			}
+			if (window_begin_y < 0)
+			{
+				window_begin_y = 0;
+				is_border = true;
+			}
+
+			meta->start_x = window_begin_x;
+			meta->start_y = window_begin_y;
+
+			meta_fp16->start_x = window_begin_x;
+			meta_fp16->start_y = window_begin_y;
+
+
+			// Quantize xpos and ypos
+			const int quantized_x_int = static_cast<int>(xpos * quantize_x);
+			const int quantized_y_int = static_cast<int>(ypos * quantize_y);
+			const int quantized_x_value = quantized_x_int % quantize_x;
+			const int quantized_y_value = quantized_y_int % quantize_y;
+			const float quantized_xpos = static_cast<float>(quantized_x_int) / quantize_x;
+			const float quantized_ypos = static_cast<float>(quantized_y_int) / quantize_y;
+
+			if (!is_border && out->factor_map[quantized_y_value * quantize_x + quantized_x_value] != 0)
+			{
+				// Not border pixel and already have coefficient calculated at this quantized position
+				meta->coeff_meta = out->factor_map[quantized_y_value * quantize_x + quantized_x_value] - 1;
+				meta_fp16->coeff_meta = out_fp16->factor_map[quantized_y_value * quantize_x + quantized_x_value] - 1;
+			}
+			else
+			{
+				// then need computation
+				float divider = 0.0f;
+
+				// This is the location of current target pixel in source pixel
+				// Quantized
+				//const float current_x = clamp(is_border ? xpos : quantized_xpos, 0.f, src_width - 1.f);
+				//const float current_y = clamp(is_border ? ypos : quantized_ypos, 0.f, src_height - 1.f);
+
+				if (!is_border)
+				{
+					// Change window position to quantized position
+					window_begin_x = static_cast<int>(quantized_xpos + filter_support) - filter_size + 1;
+					window_begin_y = static_cast<int>(quantized_ypos + filter_support) - filter_size + 1;
+				}
+
+				// Windowing positon
+				int window_x = window_begin_x;
+				int window_y = window_begin_y;
+
+				// First loop calcuate coeff
+				const size_t new_size = tmp_array_size + coeff_per_pixel;
+				if (new_size > tmp_array_capacity)
+				{
+					size_t new_capacity = tmp_array_capacity * (1.0 + (initial_growth_factor - 1.0)
+						* (1.0 - static_cast<double>(max(0, static_cast<int>(base_clz - portable_clz(tmp_array_capacity)))) / 32.0));
+					if (new_capacity < new_size)
+						new_capacity = new_size;
+					float* new_tmp = static_cast<float*>(_aligned_malloc(new_capacity * sizeof(float), 64));
+					if (new_tmp == nullptr)
+					{
+						myalignedfree(tmp_array);
+						return(false);
+					}
+					memcpy(new_tmp, tmp_array, tmp_array_size * sizeof(float));
+					myalignedfree(tmp_array);
+					tmp_array = new_tmp;
+					tmp_array_capacity = new_capacity;
+				}
+				memset(tmp_array + tmp_array_size, 0, coeff_per_pixel * sizeof(float));
+				int curr_factor_ptr = tmp_array_top;
+				tmp_array_size = new_size;
+
+// fp16 array
+				const size_t new_size_fp16 = tmp_array_fp16_size + coeff_per_pixel_fp16;
+				if (new_size_fp16 > tmp_array_fp16_capacity)
+				{
+					size_t new_capacity_fp16 = tmp_array_fp16_capacity * (1.0 + (initial_growth_factor - 1.0)
+						* (1.0 - static_cast<double>(max(0, static_cast<int>(base_clz_fp16 - portable_clz(tmp_array_fp16_capacity)))) / 32.0));
+					if (new_capacity_fp16 < new_size_fp16)
+						new_capacity_fp16 = new_size_fp16;
+					float* new_tmp_fp16 = static_cast<float*>(_aligned_malloc(new_capacity_fp16 * sizeof(float), 64));
+					if (new_tmp_fp16 == nullptr)
+					{
+						myalignedfree(tmp_array_fp16);
+						return(false);
+					}
+					memcpy(new_tmp_fp16, tmp_array_fp16, tmp_array_fp16_size * sizeof(float));
+					myalignedfree(tmp_array_fp16);
+					tmp_array_fp16 = new_tmp_fp16;
+					tmp_array_fp16_capacity = new_capacity_fp16;
+				}
+				memset(tmp_array_fp16 + tmp_array_fp16_size, 0, coeff_per_pixel_fp16 * sizeof(float));
+				int curr_factor_ptr_fp16 = tmp_array_fp16_top;
+				tmp_array_fp16_size = new_size_fp16;
+
+				for (int ly = 0; ly < filter_size; ++ly)
+				{
+					for (int lx = 0; lx < filter_size; ++lx)
+					{
+						// Euclidean distance to sampling pixel
+						const double dx = (clamp(is_border ? xpos : quantized_xpos, 0.0f, static_cast<float>(src_width - 1)) - window_x) * filter_step_x;
+						const double dy = (clamp(is_border ? ypos : quantized_ypos, 0.0f, static_cast<float>(src_height - 1)) - window_y) * filter_step_y;
+
+						float factor;
+
+						switch (kernel_type)
+						{
+						case SP_JINCSINGLE:
+							if (params.bUseLUTkernel)
+							{
+								//int index = static_cast<int>(llround((samples-1)*(dx*dx+dy*dy)/radius2 + DOUBLE_ROUND_MAGIC_NUMBER));
+								const int index = static_cast<int>(llround((samples - 1) * (dx * dx + dy * dy) / radius2));
+								factor = func->GetFactor(index);
+							}
+							else
+								factor = (float)GetFactor2D(dx, dy, radius, params.blur, params.weighting_type);
+							break;
+						case SP_JINCSUM:
+							factor = (float)GetFactor2D_JINCSUM_21(dx, dy, k10, k20, k11, k21, radius2);
+							break;
+						default: factor = 0.0; break;
+						}
+
+						tmp_array[curr_factor_ptr + static_cast<int64_t>(lx)] = factor;
+						divider += factor;
+
+						++window_x;
+					}
+
+					curr_factor_ptr += out->coeff_stride;
+
+					window_x = window_begin_x;
+					++window_y;
+				}
+
+				// Second loop to divide the coeff
+				curr_factor_ptr = tmp_array_top;
+				for (int ly = 0; ly < filter_size; ++ly)
+				{
+					for (int lx = 0; lx < filter_size; ++lx)
+					{
+						tmp_array[curr_factor_ptr + static_cast<int64_t>(lx)] /= divider;
+					}
+
+					curr_factor_ptr += out->coeff_stride;
+				}
+
+				// Save factor to table
+				if (!is_border)
+				{
+					out->factor_map[quantized_y_value * quantize_x + quantized_x_value] = tmp_array_top + 1;
+					out_fp16->factor_map[quantized_y_value * quantize_x + quantized_x_value] = tmp_array_fp16_top + 1;
+				}
+
+				// convert copy to fp16
+				curr_factor_ptr = tmp_array_top;
+				curr_factor_ptr_fp16 = tmp_array_fp16_top;
+				for (int cy = 0; cy < filter_size; ++cy)
+				{
+					for (int cx = 0; cx < filter_size; cx += 8)
+					{
+						const __m256 coeff = _mm256_load_ps(tmp_array + curr_factor_ptr + cx);
+						const __m128i coeff_fp16 = _mm256_cvtps_ph(coeff, _MM_FROUND_NO_EXC);
+						_mm_store_si128((__m128i*)(tmp_array_fp16 + curr_factor_ptr_fp16 + (cx / 2)), coeff_fp16); // need check !
+					}
+
+					curr_factor_ptr += out->coeff_stride;
+					curr_factor_ptr_fp16 += out_fp16->coeff_stride;
+				}
+
+				meta->coeff_meta = tmp_array_top;
+				tmp_array_top += coeff_per_pixel;
+
+				meta_fp16->coeff_meta = tmp_array_fp16_top;
+				tmp_array_fp16_top += coeff_per_pixel_fp16;
+
+			}
+
+			xpos += x_step;
+		}
+
+		ypos += y_step;
+		xpos = start_x;
+	}
+
+	// Copy from tmp_array to real array
+	out->factor = tmp_array;
+	out_fp16->factor = tmp_array_fp16;
+
+	return(true);
+}
+
+
+
+/* Coefficient table conversion to fp16 */
+/*
+static bool convert_coeff_table_fp16(EWAPixelCoeff* out, EWAPixelCoeff* out_fp16, const generate_coeff_params& params)
+{
+	// Initialize EWAPixelCoeff data structure
+	if (!init_coeff_table(out_fp16, params.quantize_x, params.quantize_y, out->filter_size, params.dst_width, params.dst_height, params.mod_align)) return(false);
+
+	size_t tmp_array_capacity = params.dst_width * params.dst_height * ((out->coeff_stride)/2) * out->filter_size * sizeof(float);
+	float* tmp_array_fp16 = static_cast<float*>(_aligned_malloc(tmp_array_capacity * sizeof(float), 64));
+	if (tmp_array_fp16 == nullptr) return(false);
+	int tmp_array_fp16_top = 0;
+
+	out_fp16->coeff_stride = out->coeff_stride / 2; // convert float32 to float16
+	out_fp16->factor = tmp_array_fp16;
+
+	if (((params.mod_align == 8) || (params.mod_align == 16)) == false)
+		return false;
+
+	// Use to advance the coeff pointer
+	const int coeff_per_pixel = out_fp16->coeff_stride * out_fp16->filter_size;
+
+
+	EWAPixelCoeffMeta* meta_y = out->meta;
+	EWAPixelCoeffMeta* meta_fp16_y = out_fp16->meta;
+
+	for (int y = 0; y < params.dst_height; y++)
+	{
+		EWAPixelCoeffMeta* meta = meta_y;
+		EWAPixelCoeffMeta* meta_fp16 = meta_fp16_y;
+
+		for (int x = 0; x < params.dst_width; ++x)
+		{
+			meta_fp16->start_x = meta->start_x;
+			meta_fp16->start_y = meta->start_y;
+
+			const float* coeff_ptr = out->factor + meta->coeff_meta;
+			meta_fp16->coeff_meta = tmp_array_fp16_top;
+			const float* coeff_ptr_fp16 = tmp_array_fp16 + meta_fp16->coeff_meta;
+
+			for (int ly = 0; ly < out->filter_size; ++ly)
+			{
+				for (int lx = 0; lx < out->filter_size; lx += 8)
+				{
+					const __m256 coeff = _mm256_load_ps(coeff_ptr + lx);
+					const __m128i coeff_fp16 = _mm256_cvtps_ph(coeff, _MM_FROUND_NO_EXC);
+					_mm_store_si128((__m128i*)(coeff_ptr_fp16 + (lx/2)), coeff_fp16); // need check !
+				}
+
+				coeff_ptr += out->coeff_stride;
+				coeff_ptr_fp16 += out_fp16->coeff_stride;
+			}
+
+			meta++;
+			meta_fp16++;
+
+			tmp_array_fp16_top += coeff_per_pixel;
+		} // for (x)
+
+		meta_y += params.dst_width;
+		meta_fp16_y += params.dst_width;
+
+	} // for (y)
+
+	return true;
+}
+*/
 /* Planar resampling with coeff table */
 /* 8-16 bit */
 //#pragma intel optimization_parameter target_arch=sse
@@ -1326,6 +1688,15 @@ void JincResizeMT::FreeData(void)
 			mydelete(out[i]);
 		}
 	}
+
+	for (int i = 0; i < static_cast<int>(out_fp16.size()); ++i)
+	{
+		if (out[i] != nullptr)
+		{
+			delete_coeff_table(out_fp16[i]);
+			mydelete(out_fp16[i]);
+		}
+	}
 	
 	if (init_lut!=nullptr)
 	{
@@ -1337,12 +1708,12 @@ void JincResizeMT::FreeData(void)
 JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height,
 	int quant_x, int quant_y, int tap, double blur, const char *_cplace, uint8_t _threads, int opt, int initial_capacity, bool initial_capacity_def,
 	double initial_factor, int _weighting_type, bool _bUseLUTkernel, SP_KERNEL_TYPE _sp_kernel_type,
-	float _k10, float _k20, float _k11, float _k21, float _support,
+	float _k10, float _k20, float _k11, float _k21, float _support, bool _bUseFP16coeff,
 	int range, bool _sleep, bool negativePrefetch, IScriptEnvironment* env)
     : GenericVideoFilter(_child), init_lut(nullptr),has_at_least_v8(false), has_at_least_v11(false),
 	avx512(false), avx2(false), sse41(false), subsampled(false), threads (_threads), sleep(_sleep),
 	bUseLUTkernel(_bUseLUTkernel),kernel_type(_sp_kernel_type), k10(_k10), k20(_k20), k11(_k11), k21(_k21),
-	support(_support)
+	support(_support), bUseFP16coeff(_bUseFP16coeff)
 {
 	UserId = 0;
 
@@ -1408,6 +1779,9 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 	}
     if ((!(env->GetCPUFlags() & CPUF_SSE4_1)) && (opt == 1))
         env->ThrowError("JincResizeMT: opt=1 requires SSE4.1.");
+
+	if ((!(env->GetCPUFlags() & CPUF_F16C)) && (bUseFP16coeff))
+		env->ThrowError("JincResizeMT: useFP16 requires FP16C CPU");
 
 	if ((range < 0) || (range > 4))
 		env->ThrowError("JincResizeMT: range allowed is [0..4].");
@@ -1512,6 +1886,15 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 	}
 
     out.emplace_back(new EWAPixelCoeff());
+
+	EWAPixelCoeff* out_fp16_0 = 0;
+
+	if (bUseFP16coeff)
+	{
+		out_fp16.emplace_back(new EWAPixelCoeff());
+		out_fp16_0 = out_fp16[0];
+	}
+
     generate_coeff_params params =
     {
         init_lut,
@@ -1538,13 +1921,25 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 		k10,
 		k20,
 		k11,
-		k21
+		k21,
+		out_fp16_0
     };
 
-	if (!generate_coeff_table_c(params))
+	if (bUseFP16coeff)
 	{
-		FreeData();
-		env->ThrowError("JincResizeMT: Error generating coeff table [0].");
+		if (!generate_coeff_table_fp16_c(params))
+		{
+			FreeData();
+			env->ThrowError("JincResizeMT: Error generating coeff table [0].");
+		}
+	}
+	else
+	{
+		if (!generate_coeff_table_c(params))
+		{
+			FreeData();
+			env->ThrowError("JincResizeMT: Error generating coeff table [0].");
+		}
 	}
 
 	const int shift_w = (!grey && !isRGBPfamily) ? vi.GetPlaneWidthSubsampling(PLANAR_U) : 0;
@@ -1703,7 +2098,15 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
 			{
-				process_frame_1x = resize_plane_avx2_1x<uint8_t>;
+				if(bUseFP16coeff)
+					process_frame_1x = resize_plane_avx2_1x<uint8_t, true>;
+				else
+					process_frame_1x = resize_plane_avx2_1x<uint8_t, false>;
+/*				if (bUseFP16coeff)
+					process_frame_1x = resize_plane_avx2_fp16_1x<uint8_t>;
+				else
+					process_frame_1x = resize_plane_avx2_1x<uint8_t>;*/
+
 				process_frame_2x = resize_plane_avx2_2x<uint8_t>;
 				process_frame_3x = resize_plane_avx2_3x<uint8_t>;
 				process_frame_4x = resize_plane_avx2_4x<uint8_t>;
@@ -1744,7 +2147,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
 			{
-				process_frame_1x = resize_plane_avx2_1x<uint16_t>;
+				process_frame_1x = resize_plane_avx2_1x<uint16_t, false>;
 				process_frame_2x = resize_plane_avx2_2x<uint16_t>;
 				process_frame_3x = resize_plane_avx2_3x<uint16_t>;
 				process_frame_4x = resize_plane_avx2_4x<uint16_t>;
@@ -1785,7 +2188,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
 			{
-				process_frame_1x = resize_plane_avx2_1x<float>;
+				process_frame_1x = resize_plane_avx2_1x<float, false>;
 				process_frame_2x = resize_plane_avx2_2x<float>;
 				process_frame_3x = resize_plane_avx2_3x<float>;
 				process_frame_4x = resize_plane_avx2_4x<float>;
@@ -1989,7 +2392,10 @@ PVideoFrame __stdcall JincResizeMT::GetFrame(int n, IScriptEnvironment* env)
 		switch (f_proc)
 		{
 			case 1: // Y (Grey)
-				process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
+				if (bUseFP16coeff)
+					process_frame_1x(MT_DataGF, true, out_fp16[0], ValMin, ValMax);
+				else
+					process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
 				break;
 			case 2: // RGB or YUV not subsampled
 				process_frame_3x(MT_DataGF, true, out[0], ValMin, ValMax);
@@ -2117,6 +2523,7 @@ AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnviro
 		0.0f,
 		0.0f,
 		0.0f,
+		false, // FP16
 		args[18].AsInt(1), // range
 		sleep,
 		negativePrefetch,
@@ -2225,6 +2632,7 @@ AVSValue __cdecl Create_JincResizeTaps(AVSValue args, void* user_data, IScriptEn
 		0.0f,
 		0.0f,
 		0.0f,
+		false,
 		args[13].AsInt(1), // range
 		sleep,
 		negativePrefetch,
@@ -2236,12 +2644,12 @@ AVSValue __cdecl Create_UserDefined4(AVSValue args, void* user_data, IScriptEnvi
 	const VideoInfo& vi = args[0].AsClip()->GetVideoInfo();
 
 	const int threads = args[10].AsInt(0);
-	const bool LogicalCores = args[17].AsBool(true);
-	const bool MaxPhysCores = args[18].AsBool(true);
-	const bool SetAffinity = args[19].AsBool(false);
-	const bool sleep = args[20].AsBool(false);
-	int prefetch = args[21].AsInt(0);
-	int thread_level = args[22].AsInt(6);
+	const bool LogicalCores = args[18].AsBool(true);
+	const bool MaxPhysCores = args[19].AsBool(true);
+	const bool SetAffinity = args[20].AsBool(false);
+	const bool sleep = args[21].AsBool(false);
+	int prefetch = args[22].AsInt(0);
+	int thread_level = args[23].AsInt(6);
 	
 	float k10 = (float)args[11].AsFloat(100.0f); // set to some working defaults (about close to UserDefined2Resize b=80 c=-20)
 	float k20 = (float)args[12].AsFloat(0.0f);
@@ -2343,7 +2751,8 @@ AVSValue __cdecl Create_UserDefined4(AVSValue args, void* user_data, IScriptEnvi
 		k11,
 		k21,
 		support,
-		args[18].AsInt(1), // range
+		args[16].AsBool(false), // FP16
+		args[17].AsInt(1), // range
 		sleep,
 		negativePrefetch,
 		env);
@@ -2376,7 +2785,7 @@ extern "C" __declspec(dllexport) const char* __stdcall AvisynthPluginInit3(IScri
 		"[range]i[logicalCores]b[MaxPhysCore]b[SetAffinity]b[sleep]b[prefetch]i[ThreadLevel]i", Create_JincResizeTaps<8>, 0);
 
 	env->AddFunction("UserDefined4ResizeSPMT", "c[target_width]i[target_height]i[src_left]f[src_top]f[src_width]f[src_height]f[quant_x]i[quant_y]i" \
-		"[cplace]s[threads]i[k10]f[k20]f[k11]f[k21]f[s]f" \
+		"[cplace]s[threads]i[k10]f[k20]f[k11]f[k21]f[s]f[FP16]b" \
 		"[range]i[logicalCores]b[MaxPhysCore]b[SetAffinity]b[sleep]b[prefetch]i[ThreadLevel]i", Create_UserDefined4, 0);
 
 

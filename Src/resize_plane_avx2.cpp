@@ -39,7 +39,7 @@
 #include "avs/minmax.h"
 #include "JincResizeMT.h"
 
-template <typename T>
+template <typename T, bool bFP16>
 #if defined(CLANG)
 __attribute__((__target__("avx2,fma")))
 #endif
@@ -83,8 +83,12 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
                     for (int lx = 0; lx < filter_size; lx += 8)
                     {
                         const __m256 src_ps = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr + lx)))));
-                        const __m256 coeff = _mm256_load_ps(coeff_ptr + lx);
-                        result = _mm256_fmadd_ps(src_ps, coeff, result);
+						__m256 coeff;
+						if (bFP16)
+							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx / 2))));
+						else
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+						result = _mm256_fmadd_ps(src_ps, coeff, result);
                     }
 
                     coeff_ptr += coeff_stride;
@@ -103,8 +107,12 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
                     for (int lx = 0; lx < filter_size; lx += 8)
                     {
                         const __m256 src_ps = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr + lx)))));
-                        const __m256 coeff = _mm256_load_ps(coeff_ptr + lx);
-                        result = _mm256_fmadd_ps(src_ps, coeff, result);
+						__m256 coeff;
+						if (bFP16)
+							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx / 2))));
+						else
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+						result = _mm256_fmadd_ps(src_ps, coeff, result);
                     }
 
                     coeff_ptr += coeff_stride;
@@ -123,8 +131,12 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
                     for (int lx = 0; lx < filter_size; lx += 8)
                     {
                         const __m256 src_ps = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr + lx)), min_val);
-                        const __m256 coeff = _mm256_load_ps(coeff_ptr + lx);
-                        result = _mm256_fmadd_ps(src_ps, coeff, result);
+						__m256 coeff;
+						if (bFP16)
+							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx / 2))));
+						else
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+						result = _mm256_fmadd_ps(src_ps, coeff, result);
                     }
 
                     coeff_ptr += coeff_stride;
@@ -140,7 +152,6 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
         dst += dst_pitch;
 	} // for (y)
 }
-
 
 template <typename T>
 void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
@@ -622,12 +633,20 @@ void resize_plane_avx2_4x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 }
 
 
-template void resize_plane_avx2_1x<uint8_t>(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
+template void resize_plane_avx2_1x<uint8_t, false>(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
 	const float Val_Min[], const float Val_Max[]);
-template void resize_plane_avx2_1x<uint16_t>(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
+template void resize_plane_avx2_1x<uint16_t, false>(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
 	const float Val_Min[], const float Val_Max[]);
-template void resize_plane_avx2_1x<float>(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
+template void resize_plane_avx2_1x<float, false>(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
 	const float Val_Min[], const float Val_Max[]);
+
+template void resize_plane_avx2_1x<uint8_t, true>(const MT_Data_Info_JincResizeMT* MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff* coeff,
+	const float Val_Min[], const float Val_Max[]);
+template void resize_plane_avx2_1x<uint16_t, true>(const MT_Data_Info_JincResizeMT* MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff* coeff,
+	const float Val_Min[], const float Val_Max[]);
+template void resize_plane_avx2_1x<float, true>(const MT_Data_Info_JincResizeMT* MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff* coeff,
+	const float Val_Min[], const float Val_Max[]);
+
 
 template void resize_plane_avx2_2x<uint8_t>(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
 	const float Val_Min[], const float Val_Max[]);

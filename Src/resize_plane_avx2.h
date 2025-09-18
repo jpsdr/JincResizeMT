@@ -37,9 +37,10 @@
 
 #include "JincResizeMT.h"
 
-template <typename T>
+template <typename T, bool bFP16>
 void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
 	const float Val_Min[], const float Val_Max[]);
+
 template <typename T>
 void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
 	const float Val_Min[], const float Val_Max[]);
