@@ -30,6 +30,29 @@ Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_w
 
 ------------------------------
 
+UserDefined4ResizeSPMT(clip, int target_width, int target_height,
+  float src_left, float src_top, float src_width, float src_height, int quant_x, int quant_y,
+  string cplace, int threads,float k10, float k20, float k11, float k21, float s,
+  int range, bool logicalCores, bool MaxPhysCore, bool SetAffinity, bool sleep, int prefetch, int ThreadLevel)
+
+Weighting coefficients of the 5x5 2D kernel based on jinc function with skipped corners (marked XX).
+Coefficients placement in 2D space:
+XX k21 k20 k21 XX
+k21 k11 k10 k11 k21
+k20 k10 1.0 k10 k20
+k21 k11 k10 k11 k21
+XX k21 k20 k21 XX
+
+Note : Values of coefficient are converted to 0.0 <-> 1.0 range
+in the input range 16.0 <-> 235.0, but can be outside [16..235].
+
+------------------------------
+
+JincResizeMT is more tuned for upscaling.
+UserDefined4ResizeSPMT is more tuned for downscaling.
+
+------------------------------
+
    clip -
       A clip to process. All planar (and only planar) formats are supported.
 
@@ -42,24 +65,24 @@ Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_w
    src_left -
       Cropping of the left edge.
 
-      Default: 0.0.
+      Default: 0.0
 
    src_top -
       Cropping of the top edge.
 
-      Default: 0.0.
+      Default: 0.0
 
    src_width -
       If > 0.0 it sets the width of the clip before resizing.
       If <= 0.0 it sets the cropping of the right edges before resizing.
 
-      Default: Source width.
+      Default: Source width
 
    src_height -
       If > 0.0 it sets the height of the clip before resizing.
       If <= 0.0 it sets the cropping of the bottom edges before resizing.
 
-      Default: Source height.
+      Default: Source height
 
    quant_x, quant_y -
       Controls the sub-pixel quantization.
@@ -70,19 +93,13 @@ Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_w
       Corresponding to different zero points of Jinc function.
       Must be between 1 and 16.
 
-      Default: 3.
+      Default: 3
 
    blur (JincResizeMT only) -
       Blur processing, it can reduce side effects.
       To achieve blur, the value should be less than 1.0.
 
-      Default: 1.0.
-
-   threads -
-      Controls how many threads will be used for processing. If set to 0, threads will
-      be set equal to the number of detected logical or physical cores,according logicalCores parameter.
-
-      Default:  0  (int)
+      Default: 1.0
 
    cplace -
       The location of the chroma samples. Checked and used only on subsampled formats.
@@ -96,6 +113,37 @@ Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_w
 
       Default: "auto"
 
+   threads -
+      Controls how many threads will be used for processing. If set to 0, threads will
+      be set equal to the number of detected logical or physical cores,according logicalCores parameter.
+
+      Default: 0
+
+   k10 (UserDefined4ResizeSPMT only) -
+      Weighting coefficient.
+
+      Default: 100.0
+
+   k20 (UserDefined4ResizeSPMT only) -
+      Weighting coefficient.
+
+      Default: 0.0
+
+   k11 (UserDefined4ResizeSPMT only) -
+      Weighting coefficient.
+
+      Default: 60.0
+
+   k21 (UserDefined4ResizeSPMT only) -
+      Weighting coefficient.
+
+      Default: -10.0
+
+   s (UserDefined4ResizeSPMT only) -
+      Support.
+
+      Default: 3.0
+
    opt (JincResizeMT only) -
       Sets which cpu optimizations to use.
       -1: Auto-detect without AVX-512.
@@ -104,7 +152,7 @@ Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_w
       2: Use AVX2 code.
       3: Use AVX-512 code.
 
-      Default: -1.
+      Default: -1
 
    initial_capacity (JincResizeMT only) -
       Initial memory allocation size.
@@ -120,7 +168,7 @@ Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_w
       "initial_factor=1" ensures that the next memory allocation is the minimal possible.
       Must be equal to or greater than 1.0.
 
-      Default: 1.5.
+      Default: 1.5
 
   range -
       This parameter specify the range the output video data has to comply with.
@@ -145,21 +193,21 @@ Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_w
       of logical CPU (true) or the number of physical cores (false). If your processor doesn't
       have hyper-threading or threads<>0, this parameter has no effect.
 
-      Default: true (bool)
+      Default: true
 
    MaxPhysCore -
       If true, the threads repartition will use the maximum of physical cores possible. If your
       processor doesn't have hyper-threading or the SetAffinity parameter is set to false,
       this parameter has no effect.
 
-      Default: true (bool)
+      Default: true
 
    SetAffinity -
       If this parameter is set to true, the pool of threads will set each thread to a specific core,
       according MaxPhysCore parameter. If set to false, it's leaved to the OS.
       If prefecth>number of physical cores, it's automaticaly set to false.
 
-      Default: false (bool)
+      Default: false
 
   sleep -
       If this parameter is set to true, once the filter has finished one frame, the threads of the
@@ -167,7 +215,7 @@ Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_w
       the next frame will be processed. If set to false, the threads of the threadpool are always
       running and waiting for a start event even between frames.
 
-      Default: false (bool)
+      Default: false
 
   prefetch - (added negative trim feature)
       This parameter will allow to create more than one threadpool, to avoid mutual resources acces
