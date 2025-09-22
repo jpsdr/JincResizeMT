@@ -898,7 +898,7 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 	unsigned base_clz = portable_clz(tmp_array_capacity);
 	const double initial_growth_factor = params.initial_factor;
 
-	size_t tmp_array_fp16_capacity = params.initial_capacity;
+	size_t tmp_array_fp16_capacity = params.initial_capacity / 2;
 	float* tmp_array_fp16 = static_cast<float*>(_aligned_malloc(tmp_array_fp16_capacity * sizeof(float), 64));
 	if (tmp_array_fp16 == nullptr) return(false);
 	size_t tmp_array_fp16_size = 0;
@@ -1129,80 +1129,15 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 	}
 
 	// Copy from tmp_array to real array
-	out->factor = tmp_array;
+//	out->factor = tmp_array;
 	out_fp16->factor = tmp_array_fp16;
+
+	// free fp32 array
+	myalignedfree(tmp_array);
 
 	return(true);
 }
 
-
-
-/* Coefficient table conversion to fp16 */
-/*
-static bool convert_coeff_table_fp16(EWAPixelCoeff* out, EWAPixelCoeff* out_fp16, const generate_coeff_params& params)
-{
-	// Initialize EWAPixelCoeff data structure
-	if (!init_coeff_table(out_fp16, params.quantize_x, params.quantize_y, out->filter_size, params.dst_width, params.dst_height, params.mod_align)) return(false);
-
-	size_t tmp_array_capacity = params.dst_width * params.dst_height * ((out->coeff_stride)/2) * out->filter_size * sizeof(float);
-	float* tmp_array_fp16 = static_cast<float*>(_aligned_malloc(tmp_array_capacity * sizeof(float), 64));
-	if (tmp_array_fp16 == nullptr) return(false);
-	int tmp_array_fp16_top = 0;
-
-	out_fp16->coeff_stride = out->coeff_stride / 2; // convert float32 to float16
-	out_fp16->factor = tmp_array_fp16;
-
-	if (((params.mod_align == 8) || (params.mod_align == 16)) == false)
-		return false;
-
-	// Use to advance the coeff pointer
-	const int coeff_per_pixel = out_fp16->coeff_stride * out_fp16->filter_size;
-
-
-	EWAPixelCoeffMeta* meta_y = out->meta;
-	EWAPixelCoeffMeta* meta_fp16_y = out_fp16->meta;
-
-	for (int y = 0; y < params.dst_height; y++)
-	{
-		EWAPixelCoeffMeta* meta = meta_y;
-		EWAPixelCoeffMeta* meta_fp16 = meta_fp16_y;
-
-		for (int x = 0; x < params.dst_width; ++x)
-		{
-			meta_fp16->start_x = meta->start_x;
-			meta_fp16->start_y = meta->start_y;
-
-			const float* coeff_ptr = out->factor + meta->coeff_meta;
-			meta_fp16->coeff_meta = tmp_array_fp16_top;
-			const float* coeff_ptr_fp16 = tmp_array_fp16 + meta_fp16->coeff_meta;
-
-			for (int ly = 0; ly < out->filter_size; ++ly)
-			{
-				for (int lx = 0; lx < out->filter_size; lx += 8)
-				{
-					const __m256 coeff = _mm256_load_ps(coeff_ptr + lx);
-					const __m128i coeff_fp16 = _mm256_cvtps_ph(coeff, _MM_FROUND_NO_EXC);
-					_mm_store_si128((__m128i*)(coeff_ptr_fp16 + (lx/2)), coeff_fp16); // need check !
-				}
-
-				coeff_ptr += out->coeff_stride;
-				coeff_ptr_fp16 += out_fp16->coeff_stride;
-			}
-
-			meta++;
-			meta_fp16++;
-
-			tmp_array_fp16_top += coeff_per_pixel;
-		} // for (x)
-
-		meta_y += params.dst_width;
-		meta_fp16_y += params.dst_width;
-
-	} // for (y)
-
-	return true;
-}
-*/
 /* Planar resampling with coeff table */
 /* 8-16 bit */
 //#pragma intel optimization_parameter target_arch=sse
@@ -1780,8 +1715,8 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
     if ((!(env->GetCPUFlags() & CPUF_SSE4_1)) && (opt == 1))
         env->ThrowError("JincResizeMT: opt=1 requires SSE4.1.");
 
-	if ((!(env->GetCPUFlags() & CPUF_F16C)) && (bUseFP16coeff))
-		env->ThrowError("JincResizeMT: useFP16 requires FP16C CPU");
+	if ((!(env->GetCPUFlags() & CPUF_F16C) || !(env->GetCPUFlags() & CPUF_AVX2)) && (bUseFP16coeff))
+		env->ThrowError("JincResizeMT: FP16 requires FP16C and AVX2 CPU"); // FP16C may be present at AVX cpu too ?
 
 	if ((range < 0) || (range > 4))
 		env->ThrowError("JincResizeMT: range allowed is [0..4].");
@@ -1930,7 +1865,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 		if (!generate_coeff_table_fp16_c(params))
 		{
 			FreeData();
-			env->ThrowError("JincResizeMT: Error generating coeff table [0].");
+			env->ThrowError("JincResizeMT: Error generating coeff table [0] in generate_coeff_table_fp16_c.");
 		}
 	}
 	else
@@ -1938,7 +1873,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 		if (!generate_coeff_table_c(params))
 		{
 			FreeData();
-			env->ThrowError("JincResizeMT: Error generating coeff table [0].");
+			env->ThrowError("JincResizeMT: Error generating coeff table [0] in generate_coeff_table_c.");
 		}
 	}
 
@@ -1956,6 +1891,14 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
             (0.5 * (1.0 - static_cast<double>(src_width) / static_cast<double>(target_width)) + crop_left) / div_w : crop_left / div_w;
         const double crop_top_uv = (chroma_placement == AVS_CHROMA_TOP_LEFT) ?
             (0.5 * (1.0 - static_cast<double>(src_height) / static_cast<double>(target_height)) + crop_top) / div_h : crop_top / div_h;
+
+		EWAPixelCoeff* out_fp16_1 = 0;
+
+		if (bUseFP16coeff)
+		{
+			out_fp16.emplace_back(new EWAPixelCoeff());
+			out_fp16_1 = out_fp16[1];
+		}
 
         generate_coeff_params params1 = {
             init_lut,
@@ -1982,12 +1925,25 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 			k10,
 			k20,
 			k11,
-			k21
+			k21,
+			out_fp16_1
         };
-		if (!generate_coeff_table_c(params1))
+
+		if (bUseFP16coeff)
 		{
-			FreeData();
-			env->ThrowError("JincResizeMT: Error generating coeff table [1].");
+			if (!generate_coeff_table_fp16_c(params1))
+			{
+				FreeData();
+				env->ThrowError("JincResizeMT: Error generating coeff table [1] in generate_coeff_table_fp16_c.");
+			}
+		}
+		else
+		{
+			if (!generate_coeff_table_c(params1))
+			{
+				FreeData();
+				env->ThrowError("JincResizeMT: Error generating coeff table [1] in generate_coeff_table_c.");
+			}
 		}
 	}
 
@@ -2446,12 +2402,12 @@ AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnviro
     const VideoInfo& vi = args[0].AsClip()->GetVideoInfo();
 
 	const int threads = args[12].AsInt(0);
-	const bool LogicalCores = args[19].AsBool(true);
-	const bool MaxPhysCores = args[20].AsBool(true);
-	const bool SetAffinity = args[21].AsBool(false);
-	const bool sleep = args[22].AsBool(false);
-	int prefetch = args[23].AsInt(0);
-	int thread_level = args[24].AsInt(6);
+	const bool LogicalCores = args[20].AsBool(true);
+	const bool MaxPhysCores = args[21].AsBool(true);
+	const bool SetAffinity = args[22].AsBool(false);
+	const bool sleep = args[23].AsBool(false);
+	int prefetch = args[24].AsInt(0);
+	int thread_level = args[25].AsInt(6);
 
 	const bool negativePrefetch = (prefetch < 0) ? true : false;
 	prefetch = abs(prefetch);
@@ -2542,8 +2498,8 @@ AVSValue __cdecl Create_JincResize(AVSValue args, void* user_data, IScriptEnviro
 		0.0f,
 		0.0f,
 		0.0f,
-		false, // FP16
-		args[18].AsInt(1), // range
+		args[18].AsBool(false), // FP16
+		args[19].AsInt(1), // range
 		sleep,
 		negativePrefetch,
         env);
@@ -2670,10 +2626,10 @@ AVSValue __cdecl Create_UserDefined4(AVSValue args, void* user_data, IScriptEnvi
 	int prefetch = args[22].AsInt(0);
 	int thread_level = args[23].AsInt(6);
 	
-	float k10 = (float)args[11].AsFloat(100.0f); // set to some working defaults (about close to UserDefined2Resize b=80 c=-20)
-	float k20 = (float)args[12].AsFloat(0.0f);
-	float k11 = (float)args[13].AsFloat(60.0f);
-	float k21 = (float)args[14].AsFloat(-10.0f);
+	float k10 = (float)args[11].AsFloat(95.0f); // set to some working defaults 
+	float k20 = (float)args[12].AsFloat(-5.0f);
+	float k11 = (float)args[13].AsFloat(30.0f);
+	float k21 = (float)args[14].AsFloat(-2.0f);
 	float support = (float)args[15].AsFloat(3.0f); 
 	// convert to 0..1 range
 	k10 = (k10-16.0f)/219.0f;
@@ -2788,7 +2744,7 @@ extern "C" __declspec(dllexport) const char* __stdcall AvisynthPluginInit3(IScri
 	if (!poolInterface->GetThreadPoolInterfaceStatus()) env->ThrowError("JincResizeMT: Error with the TheadPool status!");
 
     env->AddFunction("JincResizeMT", "c[target_width]i[target_height]i[src_left]f[src_top]f[src_width]f[src_height]f[quant_x]i[quant_y]i[tap]i[blur]f" \
-		"[cplace]s[threads]i[opt]i[initial_capacity]i[initial_factor]f[wt]i[lutkernel]b" \
+		"[cplace]s[threads]i[opt]i[initial_capacity]i[initial_factor]f[wt]i[lutkernel]b[FP16]b" \
 		"[range]i[logicalCores]b[MaxPhysCore]b[SetAffinity]b[sleep]b[prefetch]i[ThreadLevel]i", Create_JincResize, 0);
 	env->AddFunction("Jinc36ResizeMT", "c[target_width]i[target_height]i[src_left]f[src_top]f[src_width]f[src_height]f[quant_x]i[quant_y]i" \
 		"[cplace]s[threads]i[wt]i[lutkernel]b" \
