@@ -2098,18 +2098,20 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
 			{
-				if(bUseFP16coeff)
+				if (bUseFP16coeff)
+				{
 					process_frame_1x = resize_plane_avx2_1x<uint8_t, true>;
+					process_frame_2x = resize_plane_avx2_2x<uint8_t, true>;
+					process_frame_3x = resize_plane_avx2_3x<uint8_t, true>;
+					process_frame_4x = resize_plane_avx2_4x<uint8_t, true>;
+				}
 				else
+				{
 					process_frame_1x = resize_plane_avx2_1x<uint8_t, false>;
-/*				if (bUseFP16coeff)
-					process_frame_1x = resize_plane_avx2_fp16_1x<uint8_t>;
-				else
-					process_frame_1x = resize_plane_avx2_1x<uint8_t>;*/
-
-				process_frame_2x = resize_plane_avx2_2x<uint8_t>;
-				process_frame_3x = resize_plane_avx2_3x<uint8_t>;
-				process_frame_4x = resize_plane_avx2_4x<uint8_t>;
+					process_frame_2x = resize_plane_avx2_2x<uint8_t, false>;
+					process_frame_3x = resize_plane_avx2_3x<uint8_t, false>;
+					process_frame_4x = resize_plane_avx2_4x<uint8_t, false>;
+				}
 			}
 			else
 #endif
@@ -2147,10 +2149,20 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
 			{
-				process_frame_1x = resize_plane_avx2_1x<uint16_t, false>;
-				process_frame_2x = resize_plane_avx2_2x<uint16_t>;
-				process_frame_3x = resize_plane_avx2_3x<uint16_t>;
-				process_frame_4x = resize_plane_avx2_4x<uint16_t>;
+				if (bUseFP16coeff)
+				{
+					process_frame_1x = resize_plane_avx2_1x<uint16_t, true>;
+					process_frame_2x = resize_plane_avx2_2x<uint16_t, true>;
+					process_frame_3x = resize_plane_avx2_3x<uint16_t, true>;
+					process_frame_4x = resize_plane_avx2_4x<uint16_t, true>;
+				}
+				else
+				{
+					process_frame_1x = resize_plane_avx2_1x<uint16_t, false>;
+					process_frame_2x = resize_plane_avx2_2x<uint16_t, false>;
+					process_frame_3x = resize_plane_avx2_3x<uint16_t, false>;
+					process_frame_4x = resize_plane_avx2_4x<uint16_t, false>;
+				}
 			}
 			else
 #endif
@@ -2188,10 +2200,20 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 #ifdef AVX2_BUILD_POSSIBLE
 			if (avx2)
 			{
-				process_frame_1x = resize_plane_avx2_1x<float, false>;
-				process_frame_2x = resize_plane_avx2_2x<float>;
-				process_frame_3x = resize_plane_avx2_3x<float>;
-				process_frame_4x = resize_plane_avx2_4x<float>;
+				if (bUseFP16coeff)
+				{
+					process_frame_1x = resize_plane_avx2_1x<float, true>;
+					process_frame_2x = resize_plane_avx2_2x<float, true>;
+					process_frame_3x = resize_plane_avx2_3x<float, true>;
+					process_frame_4x = resize_plane_avx2_4x<float, true>;
+				}
+				else
+				{
+					process_frame_1x = resize_plane_avx2_1x<float, false>;
+					process_frame_2x = resize_plane_avx2_2x<float, false>;
+					process_frame_3x = resize_plane_avx2_3x<float, false>;
+					process_frame_4x = resize_plane_avx2_4x<float, false>;
+				}
 			}
 			else
 #endif
@@ -2271,21 +2293,21 @@ void JincResizeMT::ProcessFrameMT(MT_Data_Info_JincResizeMT *MT_DataGF, uint8_t 
 	switch (IdxFn)
 	{
 		case 1 : // Y (Grey)
-			process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
+			(bUseFP16coeff) ? process_frame_1x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
 			break;
 		case 2 : // RGB or YUV not subsampled
-			process_frame_3x(MT_DataGF, true, out[0], ValMin, ValMax);
+			(bUseFP16coeff) ? process_frame_3x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_3x(MT_DataGF, true, out[0], ValMin, ValMax);
 			break;
 		case 3 : // RGBA or YUVA not subsampled
-			process_frame_4x(MT_DataGF, true, out[0], ValMin, ValMax);
+			(bUseFP16coeff) ? process_frame_4x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_4x(MT_DataGF, true, out[0], ValMin, ValMax);
 			break;
 		case 4 : // YUV subsampled
-			process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
-			process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
+			(bUseFP16coeff) ? process_frame_1x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
+			(bUseFP16coeff) ? process_frame_2x(MT_DataGF, false, out_fp16[1], ValMin, ValMax) : process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
 			break;
 		case 5 : // YUVA subsampled
-			process_frame_2x(MT_DataGF, true, out[0], ValMin, ValMax);
-			process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
+			(bUseFP16coeff) ? process_frame_2x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_2x(MT_DataGF, true, out[0], ValMin, ValMax);
+			(bUseFP16coeff) ? process_frame_2x(MT_DataGF, false, out_fp16[1], ValMin, ValMax) : process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
 			break;
 		default : break;
 	}
@@ -2392,24 +2414,21 @@ PVideoFrame __stdcall JincResizeMT::GetFrame(int n, IScriptEnvironment* env)
 		switch (f_proc)
 		{
 			case 1: // Y (Grey)
-				if (bUseFP16coeff)
-					process_frame_1x(MT_DataGF, true, out_fp16[0], ValMin, ValMax);
-				else
-					process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
+				(bUseFP16coeff) ? process_frame_1x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);;
 				break;
 			case 2: // RGB or YUV not subsampled
-				process_frame_3x(MT_DataGF, true, out[0], ValMin, ValMax);
+				(bUseFP16coeff) ? process_frame_3x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_3x(MT_DataGF, true, out[0], ValMin, ValMax);
 				break;
 			case 3: // RGBA or YUVA not subsampled
-				process_frame_4x(MT_DataGF, true, out[0], ValMin, ValMax);
+				(bUseFP16coeff) ? process_frame_4x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_4x(MT_DataGF, true, out[0], ValMin, ValMax);;
 				break;
 			case 4: // YUV subsampled
-				process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
-				process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
+				(bUseFP16coeff) ? process_frame_1x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_1x(MT_DataGF, true, out[0], ValMin, ValMax);
+				(bUseFP16coeff) ? process_frame_2x(MT_DataGF, false, out_fp16[1], ValMin, ValMax) : process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);;
 				break;
 			case 5: // YUVA subsampled
-				process_frame_2x(MT_DataGF, true, out[0], ValMin, ValMax);
-				process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
+				(bUseFP16coeff) ? process_frame_2x(MT_DataGF, true, out_fp16[0], ValMin, ValMax) : process_frame_2x(MT_DataGF, true, out[0], ValMin, ValMax);
+				(bUseFP16coeff) ? process_frame_2x(MT_DataGF, false, out_fp16[1], ValMin, ValMax) : process_frame_2x(MT_DataGF, false, out[1], ValMin, ValMax);
 				break;
 			default: break;
 		}
