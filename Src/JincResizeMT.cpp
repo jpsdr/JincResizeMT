@@ -57,10 +57,12 @@
 #include "resize_plane_avx512.h"
 #endif
 
+/*
 #define myfree(ptr) if (ptr!=nullptr) { free(ptr); ptr=nullptr;}
 #define myalignedfree(ptr) if (ptr!=nullptr) { _aligned_free(ptr); ptr=nullptr;}
 #define mydeleteT(ptr) if (ptr!=nullptr) { delete[] ptr; ptr=nullptr;}
 #define mydelete(ptr) if (ptr!=nullptr) { delete ptr; ptr=nullptr;}
+*/
 
 static ThreadPoolInterface *poolInterface;
 

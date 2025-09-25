@@ -53,6 +53,12 @@
 #define JincMT_CONSTEXPR
 #endif
 
+#define myfree(ptr) if (ptr!=nullptr) { free(ptr); ptr=nullptr;}
+#define myalignedfree(ptr) if (ptr!=nullptr) { _aligned_free(ptr); ptr=nullptr;}
+#define mydeleteT(ptr) if (ptr!=nullptr) { delete[] ptr; ptr=nullptr;}
+#define mydelete(ptr) if (ptr!=nullptr) { delete ptr; ptr=nullptr;}
+
+
 #ifndef __CHROMALOCATION__
 #define __CHROMALOCATION__
 typedef enum _ChromaLocation_e
