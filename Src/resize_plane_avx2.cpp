@@ -64,19 +64,18 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 
 	EWAPixelCoeffMeta *meta_y = coeff->meta + (Y_Min*dst_width);
 
-	const int filter_size_mod2 = coeff->filter_size / 2 * 2;
-
 /*	int coeff_stride_mod16;
 	if (bFP16)
 		coeff_stride_mod16 = (coeff->coeff_stride * 2) / 16 * 16;
 	else
-		coeff_stride_mod16 = coeff->coeff_stride / 16 * 16;*/
+		coeff_stride_mod16 = coeff->coeff_stride / 16 * 16;
+	
+//	const bool cs_notMod16 = coeff_stride_mod16 < coeff->coeff_stride; */
 
-	const bool fs_notMod2 = filter_size_mod2 < coeff->filter_size;
-//	const bool cs_notMod16 = coeff_stride_mod16 < coeff->coeff_stride;
+	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
 
-	const int filter_size = coeff->filter_size;
-	const int coeff_stride = coeff->coeff_stride;
+	const int filter_size_mod2 = filter_size / 2 * 2;
+	const bool fs_notMod2 = filter_size_mod2 < filter_size;
 
     for (int y = Y_Min; y < Y_Max; y++)
     {
@@ -356,8 +355,11 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 	const __m256 min_val2 = _mm256_set1_ps(Val_Min[idx2]);
 
 	EWAPixelCoeffMeta *meta_y = coeff->meta + (Y_Min*dst_width);
-
+	
 	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
+
+	const int filter_size_mod2 = filter_size / 2 * 2;
+	const bool fs_notMod2 = filter_size_mod2 < filter_size;
 
 	for (int y = Y_Min; y < Y_Max; y++)
 	{
@@ -371,9 +373,12 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 			__m256 result1 = _mm256_setzero_ps();
 			__m256 result2 = _mm256_setzero_ps();
 
+			__m256 result1_2 = _mm256_setzero_ps();
+			__m256 result2_2 = _mm256_setzero_ps();
+
 			if JincMT_CONSTEXPR(std::is_same<T, uint8_t>::value)
 			{
-				for (int ly = 0; ly < filter_size; ++ly)
+/*				for (int ly = 0; ly < filter_size; ++ly)
 				{
 					for (int lx = 0; lx < filter_size; lx += 8)
 					{
@@ -393,6 +398,64 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					src_ptr1 += src_pitch1;
 					src_ptr2 += src_pitch2;
 				}
+				*/
+				for (int ly = 0; ly < filter_size_mod2; ly += 2)
+				{
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+
+						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
+						const __m256 src_ps1_2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx + src_pitch1)))));
+						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
+						const __m256 src_ps2_2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx + src_pitch2)))));
+
+						__m256 coeff, coeff2;
+
+						if (bFP16)
+						{
+							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2)));
+							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2) + coeff_stride));
+							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
+							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
+						}
+						else
+						{
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+							coeff2 = _mm256_load_ps(coeff_ptr + lx + coeff_stride);
+						}
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result1_2 = _mm256_fmadd_ps(src_ps1_2, coeff2, result1_2);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+						result2_2 = _mm256_fmadd_ps(src_ps2_2, coeff2, result2_2);
+					}
+
+					coeff_ptr += coeff_stride * 2;
+					src_ptr1 += src_pitch1 * 2;
+					src_ptr2 += src_pitch2 * 2;
+				}
+
+				result1 = _mm256_add_ps(result1, result1_2);
+				result2 = _mm256_add_ps(result2, result2_2);
+
+				// last row
+				if (fs_notMod2)
+				{
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
+						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
+
+						__m256 coeff;
+						if (bFP16)
+							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx / 2))));
+						else
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+					}
+				}
 
 				__m128 hsum1 = _mm_add_ps(_mm256_castps256_ps128(result1), _mm256_extractf128_ps(result1, 1));
 				__m128 hsum2 = _mm_add_ps(_mm256_castps256_ps128(result2), _mm256_extractf128_ps(result2, 1));
@@ -405,7 +468,7 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 			}
 			else if JincMT_CONSTEXPR(std::is_same<T, uint16_t>::value)
 			{
-				for (int ly = 0; ly < filter_size; ++ly)
+/*				for (int ly = 0; ly < filter_size; ++ly)
 				{
 					for (int lx = 0; lx < filter_size; lx += 8)
 					{
@@ -425,6 +488,65 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					src_ptr1 += src_pitch1;
 					src_ptr2 += src_pitch2;
 				}
+				*/
+				for (int ly = 0; ly < filter_size_mod2; ly += 2)
+				{
+
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+
+						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
+						const __m256 src_ps1_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx + src_pitch1)))));
+						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
+						const __m256 src_ps2_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx + src_pitch2)))));
+
+						__m256 coeff, coeff2;
+
+						if (bFP16)
+						{
+							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2)));
+							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2) + coeff_stride));
+							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
+							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
+						}
+						else
+						{
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+							coeff2 = _mm256_load_ps(coeff_ptr + lx + coeff_stride);
+						}
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result1_2 = _mm256_fmadd_ps(src_ps1_2, coeff2, result1_2);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+						result2_2 = _mm256_fmadd_ps(src_ps2_2, coeff2, result2_2);
+					}
+
+					coeff_ptr += coeff_stride * 2;
+					src_ptr1 += src_pitch1 * 2;
+					src_ptr2 += src_pitch2 * 2;
+				}
+
+				result1 = _mm256_add_ps(result1, result1_2);
+				result2 = _mm256_add_ps(result2, result2_2);
+
+				// last row
+				if (fs_notMod2)
+				{
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
+						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
+
+						__m256 coeff;
+						if (bFP16)
+							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx / 2))));
+						else
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+					}
+				}
 
 				__m128 hsum1 = _mm_add_ps(_mm256_castps256_ps128(result1), _mm256_extractf128_ps(result1, 1));
 				__m128 hsum2 = _mm_add_ps(_mm256_castps256_ps128(result2), _mm256_extractf128_ps(result2, 1));
@@ -437,7 +559,7 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 			}
 			else
 			{
-				for (int ly = 0; ly < filter_size; ++ly)
+/*				for (int ly = 0; ly < filter_size; ++ly)
 				{
 					for (int lx = 0; lx < filter_size; lx += 8)
 					{
@@ -457,6 +579,66 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					src_ptr1 += src_pitch1;
 					src_ptr2 += src_pitch2;
 				}
+				*/
+				for (int ly = 0; ly < filter_size_mod2; ly += 2)
+				{
+
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+
+						const __m256 src_ps1 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr1 + lx)), min_val1);
+						const __m256 src_ps1_2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr1 + lx + src_pitch1)), min_val1);
+						const __m256 src_ps2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx)), min_val1);
+						const __m256 src_ps2_2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx + src_pitch2)), min_val2);
+
+						__m256 coeff, coeff2;
+
+						if (bFP16)
+						{
+							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2)));
+							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2) + coeff_stride));
+							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
+							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
+						}
+						else
+						{
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+							coeff2 = _mm256_load_ps(coeff_ptr + lx + coeff_stride);
+						}
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result1_2 = _mm256_fmadd_ps(src_ps1_2, coeff2, result1_2);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+						result2_2 = _mm256_fmadd_ps(src_ps2_2, coeff2, result2_2);
+					}
+
+					coeff_ptr += coeff_stride * 2;
+					src_ptr1 += src_pitch1 * 2;
+					src_ptr2 += src_pitch2 * 2;
+				}
+
+				result1 = _mm256_add_ps(result1, result1_2);
+				result2 = _mm256_add_ps(result2, result2_2);
+
+				// last row
+				if (fs_notMod2)
+				{
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+						const __m256 src_ps1 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr1 + lx)), min_val1);
+						const __m256 src_ps2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx)), min_val2);
+
+						__m256 coeff;
+						if (bFP16)
+							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx / 2))));
+						else
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+					}
+				}
+
 
 				__m128 hsum1 = _mm_add_ps(_mm256_castps256_ps128(result1), _mm256_extractf128_ps(result1, 1));
 				__m128 hsum2 = _mm_add_ps(_mm256_castps256_ps128(result2), _mm256_extractf128_ps(result2, 1));
@@ -512,6 +694,9 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 
 	const int filter_size = coeff->filter_size, coeff_stride = coeff->coeff_stride;
 
+	const int filter_size_mod2 = filter_size / 2 * 2;
+	const bool fs_notMod2 = filter_size_mod2 < filter_size;
+
 	for (int y = Y_Min; y < Y_Max; y++)
 	{
 		EWAPixelCoeffMeta *meta = meta_y;
@@ -526,9 +711,14 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 			__m256 result2 = _mm256_setzero_ps();
 			__m256 result3 = _mm256_setzero_ps();
 
+			__m256 result1_2 = _mm256_setzero_ps();
+			__m256 result2_2 = _mm256_setzero_ps();
+			__m256 result3_2 = _mm256_setzero_ps();
+
+
 			if JincMT_CONSTEXPR(std::is_same<T, uint8_t>::value)
 			{
-				for (int ly = 0; ly < filter_size; ++ly)
+/*				for (int ly = 0; ly < filter_size; ++ly)
 				{
 					for (int lx = 0; lx < filter_size; lx += 8)
 					{
@@ -551,6 +741,73 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					src_ptr2 += src_pitch2;
 					src_ptr3 += src_pitch3;
 				}
+				*/
+				for (int ly = 0; ly < filter_size_mod2; ly += 2)
+				{
+
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+
+						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
+						const __m256 src_ps1_2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx + src_pitch1)))));
+						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
+						const __m256 src_ps2_2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx + src_pitch2)))));
+						const __m256 src_ps3 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx)))));
+						const __m256 src_ps3_2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx + src_pitch2)))));
+
+						__m256 coeff, coeff2;
+
+						if (bFP16)
+						{
+							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2)));
+							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2) + coeff_stride));
+							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
+							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
+						}
+						else
+						{
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+							coeff2 = _mm256_load_ps(coeff_ptr + lx + coeff_stride);
+						}
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result1_2 = _mm256_fmadd_ps(src_ps1_2, coeff2, result1_2);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+						result2_2 = _mm256_fmadd_ps(src_ps2_2, coeff2, result2_2);
+						result3 = _mm256_fmadd_ps(src_ps3, coeff, result3);
+						result3_2 = _mm256_fmadd_ps(src_ps3_2, coeff2, result3_2);
+					}
+
+					coeff_ptr += coeff_stride * 2;
+					src_ptr1 += src_pitch1 * 2;
+					src_ptr2 += src_pitch2 * 2;
+					src_ptr3 += src_pitch3 * 2;
+				}
+
+				result1 = _mm256_add_ps(result1, result1_2);
+				result2 = _mm256_add_ps(result2, result2_2);
+				result3 = _mm256_add_ps(result3, result3_2);
+
+				// last row
+				if (fs_notMod2)
+				{
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
+						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
+						const __m256 src_ps3 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx)))));
+						
+						__m256 coeff;
+						if (bFP16)
+							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx / 2))));
+						else
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+						result3 = _mm256_fmadd_ps(src_ps3, coeff, result3);
+					}
+				}
 
 				__m128 hsum1 = _mm_add_ps(_mm256_castps256_ps128(result1), _mm256_extractf128_ps(result1, 1));
 				__m128 hsum2 = _mm_add_ps(_mm256_castps256_ps128(result2), _mm256_extractf128_ps(result2, 1));
@@ -567,7 +824,7 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 			}
 			else if JincMT_CONSTEXPR(std::is_same<T, uint16_t>::value)
 			{
-				for (int ly = 0; ly < filter_size; ++ly)
+/*				for (int ly = 0; ly < filter_size; ++ly)
 				{
 					for (int lx = 0; lx < filter_size; lx += 8)
 					{
@@ -589,6 +846,72 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					src_ptr1 += src_pitch1;
 					src_ptr2 += src_pitch2;
 					src_ptr3 += src_pitch3;
+				}*/
+				for (int ly = 0; ly < filter_size_mod2; ly += 2)
+				{
+
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+
+						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
+						const __m256 src_ps1_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx + src_pitch1)))));
+						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
+						const __m256 src_ps2_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx + src_pitch2)))));
+						const __m256 src_ps3 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx)))));
+						const __m256 src_ps3_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx + src_pitch2)))));
+
+						__m256 coeff, coeff2;
+
+						if (bFP16)
+						{
+							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2)));
+							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2) + coeff_stride));
+							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
+							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
+						}
+						else
+						{
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+							coeff2 = _mm256_load_ps(coeff_ptr + lx + coeff_stride);
+						}
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result1_2 = _mm256_fmadd_ps(src_ps1_2, coeff2, result1_2);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+						result2_2 = _mm256_fmadd_ps(src_ps2_2, coeff2, result2_2);
+						result3 = _mm256_fmadd_ps(src_ps3, coeff, result3);
+						result3_2 = _mm256_fmadd_ps(src_ps3_2, coeff2, result3_2);
+					}
+
+					coeff_ptr += coeff_stride * 2;
+					src_ptr1 += src_pitch1 * 2;
+					src_ptr2 += src_pitch2 * 2;
+					src_ptr3 += src_pitch3 * 2;
+				}
+
+				result1 = _mm256_add_ps(result1, result1_2);
+				result2 = _mm256_add_ps(result2, result2_2);
+				result3 = _mm256_add_ps(result3, result3_2);
+
+				// last row
+				if (fs_notMod2)
+				{
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
+						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
+						const __m256 src_ps3 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx)))));
+
+						__m256 coeff;
+						if (bFP16)
+							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx / 2))));
+						else
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+						result3 = _mm256_fmadd_ps(src_ps3, coeff, result3);
+					}
 				}
 
 				__m128 hsum1 = _mm_add_ps(_mm256_castps256_ps128(result1), _mm256_extractf128_ps(result1, 1));
@@ -606,7 +929,7 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 			}
 			else
 			{
-				for (int ly = 0; ly < filter_size; ++ly)
+/*				for (int ly = 0; ly < filter_size; ++ly)
 				{
 					for (int lx = 0; lx < filter_size; lx += 8)
 					{
@@ -628,6 +951,73 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					src_ptr1 += src_pitch1;
 					src_ptr2 += src_pitch2;
 					src_ptr3 += src_pitch3;
+				}
+				*/
+				for (int ly = 0; ly < filter_size_mod2; ly += 2)
+				{
+
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+
+						const __m256 src_ps1 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr1 + lx)), min_val1); 
+						const __m256 src_ps1_2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr1 + lx + src_pitch1)), min_val1);
+						const __m256 src_ps2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx)), min_val1);
+						const __m256 src_ps2_2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx + src_pitch2)), min_val2);
+						const __m256 src_ps3 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr3 + lx)), min_val3);
+						const __m256 src_ps3_2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr3 + lx + src_pitch3)), min_val3);
+						
+						__m256 coeff, coeff2;
+
+						if (bFP16)
+						{
+							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2)));
+							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + (lx / 2) + coeff_stride));
+							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
+							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
+						}
+						else
+						{
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+							coeff2 = _mm256_load_ps(coeff_ptr + lx + coeff_stride);
+						}
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result1_2 = _mm256_fmadd_ps(src_ps1_2, coeff2, result1_2);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+						result2_2 = _mm256_fmadd_ps(src_ps2_2, coeff2, result2_2);
+						result3 = _mm256_fmadd_ps(src_ps3, coeff, result3);
+						result3_2 = _mm256_fmadd_ps(src_ps3_2, coeff2, result3_2);
+					}
+
+					coeff_ptr += coeff_stride * 2;
+					src_ptr1 += src_pitch1 * 2;
+					src_ptr2 += src_pitch2 * 2;
+					src_ptr3 += src_pitch3 * 2;
+				}
+
+				result1 = _mm256_add_ps(result1, result1_2);
+				result2 = _mm256_add_ps(result2, result2_2);
+				result3 = _mm256_add_ps(result3, result3_2);
+
+				// last row
+				if (fs_notMod2)
+				{
+					for (int lx = 0; lx < filter_size; lx += 8)
+					{
+						const __m256 src_ps1 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr1 + lx)), min_val1);
+						const __m256 src_ps2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx)), min_val2);
+						const __m256 src_ps3 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr3 + lx)), min_val3);
+
+						__m256 coeff;
+						if (bFP16)
+							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx / 2))));
+						else
+							coeff = _mm256_load_ps(coeff_ptr + lx);
+
+						result1 = _mm256_fmadd_ps(src_ps1, coeff, result1);
+						result2 = _mm256_fmadd_ps(src_ps2, coeff, result2);
+						result3 = _mm256_fmadd_ps(src_ps3, coeff, result3);
+					}
 				}
 
 				__m128 hsum1 = _mm_add_ps(_mm256_castps256_ps128(result1), _mm256_extractf128_ps(result1, 1));
