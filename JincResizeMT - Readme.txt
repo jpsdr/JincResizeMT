@@ -101,7 +101,7 @@ UserDefined4ResizeSPMT is more tuned for downscaling.
 
    quant_x, quant_y -
       Controls the sub-pixel quantization.
-      Must be between 1 and 256.
+      Must be between 1 and 2048.
       Default: 256.
 
    tap (JincResizeMT only) -
