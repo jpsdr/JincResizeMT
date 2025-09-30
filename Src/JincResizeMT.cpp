@@ -843,12 +843,10 @@ static bool generate_coeff_table_c(const generate_coeff_params &params)
 	return(true);
 }
 
-
-/* Coefficient table generation for fp32 and fp16*/
+/* Coefficient table generation for fp16*/
 static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 {
 	Lut* func = params.func;
-	EWAPixelCoeff* out = params.out;
 	EWAPixelCoeff* out_fp16 = params.out_fp16;
 	int quantize_x = params.quantize_x;
 	int quantize_y = params.quantize_y;
@@ -884,21 +882,12 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 	float ypos = static_cast<float>(params.crop_top + (params.crop_height - dst_height) / (dst_height * static_cast<int64_t>(2)));
 
 	// Initialize EWAPixelCoeff data structure
-	if (!init_coeff_table(out, quantize_x, quantize_y, filter_size, dst_width, dst_height, mod_align)) return(false);
+	if (!init_coeff_table(out_fp16, quantize_x, quantize_y, filter_size, dst_width, dst_height, mod_align)) return(false);
+	out_fp16->coeff_stride /= 2; // for 16bit samples
 
-	if (out_fp16 != 0)
-	{
-		if (!init_coeff_table(out_fp16, quantize_x, quantize_y, filter_size, dst_width, dst_height, mod_align)) return(false);
-		out_fp16->coeff_stride /= 2; // for 16bit samples
-	}
-
-	size_t tmp_array_capacity = params.initial_capacity;
+	size_t tmp_array_capacity = out_fp16->coeff_stride * 2 * filter_size; // in number of float32
 	float* tmp_array = static_cast<float*>(_aligned_malloc(tmp_array_capacity * sizeof(float), 64));
 	if (tmp_array == nullptr) return(false);
-	size_t tmp_array_size = 0;
-	int tmp_array_top = 0;
-	unsigned base_clz = portable_clz(tmp_array_capacity);
-	const double initial_growth_factor = params.initial_factor;
 
 	size_t tmp_array_fp16_capacity = params.initial_capacity / 2;
 	float* tmp_array_fp16 = static_cast<float*>(_aligned_malloc(tmp_array_fp16_capacity * sizeof(float), 64));
@@ -906,11 +895,11 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 	size_t tmp_array_fp16_size = 0;
 	int tmp_array_fp16_top = 0;
 	unsigned base_clz_fp16 = portable_clz(tmp_array_fp16_capacity);
+	const double initial_growth_factor = params.initial_factor;
 
 	const double radius2 = radius * radius;
 
 	// Use to advance the coeff pointer
-	const int coeff_per_pixel = out->coeff_stride * filter_size;
 	const int coeff_per_pixel_fp16 = out_fp16->coeff_stride * filter_size;
 
 	for (int y = 0; y < dst_height; ++y)
@@ -919,7 +908,6 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 		{
 			bool is_border = false;
 
-			EWAPixelCoeffMeta* meta = &out->meta[y * dst_width + x];
 			EWAPixelCoeffMeta* meta_fp16 = &out_fp16->meta[y * dst_width + x];
 
 			// Here, the window_*** variable specified a begin/size/end
@@ -952,12 +940,8 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 				is_border = true;
 			}
 
-			meta->start_x = window_begin_x;
-			meta->start_y = window_begin_y;
-
 			meta_fp16->start_x = window_begin_x;
 			meta_fp16->start_y = window_begin_y;
-
 
 			// Quantize xpos and ypos
 			const int quantized_x_int = static_cast<int>(xpos * quantize_x);
@@ -967,10 +951,9 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 			const float quantized_xpos = static_cast<float>(quantized_x_int) / quantize_x;
 			const float quantized_ypos = static_cast<float>(quantized_y_int) / quantize_y;
 
-			if (!is_border && out->factor_map[quantized_y_value * quantize_x + quantized_x_value] != 0)
+			if (!is_border && out_fp16->factor_map[quantized_y_value * quantize_x + quantized_x_value] != 0)
 			{
 				// Not border pixel and already have coefficient calculated at this quantized position
-				meta->coeff_meta = out->factor_map[quantized_y_value * quantize_x + quantized_x_value] - 1;
 				meta_fp16->coeff_meta = out_fp16->factor_map[quantized_y_value * quantize_x + quantized_x_value] - 1;
 			}
 			else
@@ -995,29 +978,10 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 				int window_y = window_begin_y;
 
 				// First loop calcuate coeff
-				const size_t new_size = tmp_array_size + coeff_per_pixel;
-				if (new_size > tmp_array_capacity)
-				{
-					size_t new_capacity = tmp_array_capacity * (1.0 + (initial_growth_factor - 1.0)
-						* (1.0 - static_cast<double>(max(0, static_cast<int>(base_clz - portable_clz(tmp_array_capacity)))) / 32.0));
-					if (new_capacity < new_size)
-						new_capacity = new_size;
-					float* new_tmp = static_cast<float*>(_aligned_malloc(new_capacity * sizeof(float), 64));
-					if (new_tmp == nullptr)
-					{
-						myalignedfree(tmp_array);
-						return(false);
-					}
-					memcpy(new_tmp, tmp_array, tmp_array_size * sizeof(float));
-					myalignedfree(tmp_array);
-					tmp_array = new_tmp;
-					tmp_array_capacity = new_capacity;
-				}
-				memset(tmp_array + tmp_array_size, 0, coeff_per_pixel * sizeof(float));
-				int curr_factor_ptr = tmp_array_top;
-				tmp_array_size = new_size;
+				int curr_factor_ptr = 0;
+				memset(tmp_array, 0, tmp_array_capacity * sizeof(float)); // clean with zeroes
 
-// fp16 array
+				// fp16 array
 				const size_t new_size_fp16 = tmp_array_fp16_size + coeff_per_pixel_fp16;
 				if (new_size_fp16 > tmp_array_fp16_capacity)
 				{
@@ -1074,14 +1038,14 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 						++window_x;
 					}
 
-					curr_factor_ptr += out->coeff_stride;
+					curr_factor_ptr += (out_fp16->coeff_stride * 2); // in size of float32
 
 					window_x = window_begin_x;
 					++window_y;
 				}
 
 				// Second loop to divide the coeff
-				curr_factor_ptr = tmp_array_top;
+				curr_factor_ptr = 0;
 				for (int ly = 0; ly < filter_size; ++ly)
 				{
 					for (int lx = 0; lx < filter_size; ++lx)
@@ -1089,18 +1053,17 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 						tmp_array[curr_factor_ptr + static_cast<int64_t>(lx)] /= divider;
 					}
 
-					curr_factor_ptr += out->coeff_stride;
+					curr_factor_ptr += (out_fp16->coeff_stride * 2); // in size of float32
 				}
 
 				// Save factor to table
 				if (!is_border)
 				{
-					out->factor_map[quantized_y_value * quantize_x + quantized_x_value] = tmp_array_top + 1;
 					out_fp16->factor_map[quantized_y_value * quantize_x + quantized_x_value] = tmp_array_fp16_top + 1;
 				}
 
 				// convert copy to fp16
-				curr_factor_ptr = tmp_array_top;
+				curr_factor_ptr = 0;
 				curr_factor_ptr_fp16 = tmp_array_fp16_top;
 				for (int cy = 0; cy < filter_size; ++cy)
 				{
@@ -1108,15 +1071,13 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 					{
 						const __m256 coeff = _mm256_load_ps(tmp_array + curr_factor_ptr + cx);
 						const __m128i coeff_fp16 = _mm256_cvtps_ph(coeff, _MM_FROUND_NO_EXC);
-						_mm_store_si128((__m128i*)(tmp_array_fp16 + curr_factor_ptr_fp16 + (cx / 2)), coeff_fp16); // need check !
+						_mm_store_si128((__m128i*)(tmp_array_fp16 + curr_factor_ptr_fp16 + (cx / 2)), coeff_fp16);
 					}
 
-					curr_factor_ptr += out->coeff_stride;
+					//curr_factor_ptr += out->coeff_stride;
+					curr_factor_ptr += (out_fp16->coeff_stride) * 2; // in size of float32
 					curr_factor_ptr_fp16 += out_fp16->coeff_stride;
 				}
-
-				meta->coeff_meta = tmp_array_top;
-				tmp_array_top += coeff_per_pixel;
 
 				meta_fp16->coeff_meta = tmp_array_fp16_top;
 				tmp_array_fp16_top += coeff_per_pixel_fp16;
@@ -1131,7 +1092,6 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 	}
 
 	// Copy from tmp_array to real array
-//	out->factor = tmp_array;
 	out_fp16->factor = tmp_array_fp16;
 
 	// free fp32 array
@@ -1139,6 +1099,7 @@ static bool generate_coeff_table_fp16_c(const generate_coeff_params& params)
 
 	return(true);
 }
+
 
 /* Planar resampling with coeff table */
 /* 8-16 bit */
@@ -1628,7 +1589,7 @@ void JincResizeMT::FreeData(void)
 
 	for (int i = 0; i < static_cast<int>(out_fp16.size()); ++i)
 	{
-		if (out[i] != nullptr)
+		if (out_fp16[i] != nullptr)
 		{
 			delete_coeff_table(out_fp16[i]);
 			mydelete(out_fp16[i]);
