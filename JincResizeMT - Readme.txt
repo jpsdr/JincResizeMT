@@ -43,6 +43,21 @@ k20 k10 1.0 k10 k20
 k21 k11 k10 k11 k21
 XX k21 k20 k21 XX
 
+k10, k20, k11, k21 - weighting coefficients.
+Float values. Range mapping 16..235 to 0.0..1.0 (as in limited 8bit)
+  internally (same as in UserDefined2Resize).
+Valid range - unlimited. But remember the center member k(0,0) is 1.0 fixed internally (equal to 235 user input).
+Default values - 100,0,60,-10. Adjusted to make close result to medium sharp of UserDefined2Resize(b=80, c=-20).
+If set to (16,16,16,16) - the kernel is equal to JincResize(wt=0) and s-param defines the taps (kernel size) used.
+Typical task for kernel coefficients adjustment - get round shape smallest sized dot surrounded with undershoot
+(if video look/makeup required) or smooth falloff (if film look/makeup required) with minimum ringing.
+At the kernel setup it may be recommended to set s (support) value to big enough like 5 or 10 to check
+possible ringing at far distance.
+After kernel tuned for required shape - s param may be reduced to minimal enough to get best performance
+without loss of quality.
+
+
+
 Note : Values of coefficient are converted to 0.0 <-> 1.0 range
 in the input range 16.0 <-> 235.0, but can be outside [16..235].
 
