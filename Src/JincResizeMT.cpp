@@ -1644,11 +1644,11 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 	if ((tap < 1) || (tap > 16))
 		env->ThrowError("JincResizeMT: tap must be between 1..16.");
 
-    if ((quant_x < 1) || (quant_x > 256))
-        env->ThrowError("JincResizeMT: quant_x must be between 1..256.");
+    if ((quant_x < 1) || (quant_x > 2048))
+        env->ThrowError("JincResizeMT: quant_x must be between 1..2048.");
 
-    if ((quant_y < 1) || (quant_y > 256))
-        env->ThrowError("JincResizeMT: quant_y must be between 1..256.");
+    if ((quant_y < 1) || (quant_y > 2048))
+        env->ThrowError("JincResizeMT: quant_y must be between 1..2048.");
 
     if ((opt > 3) || (opt < -1))
         env->ThrowError("JincResizeMT: opt must be between -1..3.");
