@@ -114,26 +114,56 @@ struct EWAPixelCoeff
 
 #define LUT_SIZE_VALUE 1024
 
-class Lut
+class JincMT_Lut
 {
     int lut_size;
 
 public:
-    Lut();
-	virtual ~Lut();
+	JincMT_Lut();
+	virtual ~JincMT_Lut();
 	bool InitLut(int lutsize, double radius, double blur, WEIGHTING_TYPE wt);
     float GetFactor(int index);
 
     double* lut;
 };
 
-typedef void (*JincResizeMT_Process)(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *coeff,
+typedef struct _JincMT_generate_coeff_params
+{
+	JincMT_Lut *func;
+	EWAPixelCoeff *out, *out_fp16;
+	int quantize_x;
+	int quantize_y;
+	int samples;
+	int src_width;
+	int src_height;
+	int dst_width;
+	int dst_height;
+	double radius;
+	double crop_left;
+	double crop_top;
+	double crop_width;
+	double crop_height;
+	int initial_capacity;
+	double initial_factor;
+	int mod_align;
+	bool bUseLUTkernel;
+	double blur;
+	WEIGHTING_TYPE weighting_type;
+	SP_KERNEL_TYPE kernel_type;
+	float k10;
+	float k20;
+	float k11;
+	float k21;
+} JincMT_generate_coeff_params;
+
+typedef void (*JincResizeMT_Process)(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *tab_coeff,
 	const float Val_Min[], const float Val_Max[]);
 
 class JincResizeMT : public GenericVideoFilter
 {
-    Lut *init_lut;
+	JincMT_Lut *init_lut;
 	std::vector<EWAPixelCoeff*> out;
+	std::vector<EWAPixelCoeff*> out_fp16;
     bool avx512,avx2,sse41;
     uint8_t planecount;
     bool has_at_least_v8,has_at_least_v11;
@@ -154,6 +184,8 @@ class JincResizeMT : public GenericVideoFilter
 	float k21;
 	float support;
 
+	bool bUseFP16coeff;
+
 	JincResizeMT_Process process_frame_1x, process_frame_2x, process_frame_3x, process_frame_4x;
 
 	Public_MT_Data_Thread MT_Thread[MAX_MT_THREADS];
@@ -173,7 +205,7 @@ class JincResizeMT : public GenericVideoFilter
 public:
 	JincResizeMT(PClip _child, int target_width, int target_height, double crop_left, double crop_top, double crop_width, double crop_height,
 		int quant_x, int quant_y, int tap, double blur, const char *_cplace, uint8_t _threads, int opt, int initial_capacity, bool initial_capacity_def, double initial_factor, int _weighting_type, bool _bUseLUTkernel,
-		SP_KERNEL_TYPE _sp_kernel_type, float _k10, float _k20, float _k11, float _k21, float _support,
+		SP_KERNEL_TYPE _sp_kernel_type, float _k10, float _k20, float _k11, float _k21, float _support, bool _bUseFP16coeff,
 		int range, bool _sleep, bool negativePrefetch,IScriptEnvironment* env);
     PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment *env);
     virtual ~JincResizeMT();
