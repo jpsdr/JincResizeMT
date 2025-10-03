@@ -164,7 +164,7 @@ class JincResizeMT : public GenericVideoFilter
 	JincMT_Lut *init_lut;
 	std::vector<EWAPixelCoeff*> out;
 	std::vector<EWAPixelCoeff*> out_fp16;
-    bool avx512,avx2,sse41;
+    bool avx512,avx2,sse41,avx512_d;
     uint8_t planecount;
     bool has_at_least_v8,has_at_least_v11;
 	bool grey,isRGBPfamily,isAlphaChannel;

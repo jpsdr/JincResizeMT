@@ -753,7 +753,6 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
                     {
                         const __m256 src_ps = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr + lx)))));
 						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr + lx + src_pitch)))));
-
 						__m256 coeff, coeff2;
 
 						if JincMT_CONSTEXPR (bFP16)
@@ -761,6 +760,7 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 							const int lx2 = lx >> 1;
 							const __m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2));
 							const __m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2 + coeff_stride));
+
 							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
 							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
 						}
@@ -800,6 +800,7 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
                 __m128 hsum = _mm_add_ps(_mm256_castps256_ps128(result), _mm256_extractf128_ps(result, 1));
                 hsum = _mm_hadd_ps(_mm_hadd_ps(hsum, hsum), _mm_hadd_ps(hsum, hsum));
 				const T final_res = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum), _mm_setzero_si128()), _mm_setzero_si128()));
+
 				dst[x] = clamp(final_res,val_min,val_max);
             }
             else if JincMT_CONSTEXPR (std::is_same<T, uint16_t>::value)
@@ -810,7 +811,6 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
                     {
 						const __m256 src_ps = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr + lx)))));
 						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr + lx + src_pitch)))));
-
 						__m256 coeff, coeff2;
 
 						if JincMT_CONSTEXPR (bFP16)
@@ -818,6 +818,7 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 							const int lx2 = lx >> 1;
 							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2));
 							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2 + coeff_stride));
+
 							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
 							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
 						}
@@ -857,6 +858,7 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
                 __m128 hsum = _mm_add_ps(_mm256_castps256_ps128(result), _mm256_extractf128_ps(result, 1));
                 hsum = _mm_hadd_ps(_mm_hadd_ps(hsum, hsum), _mm_hadd_ps(hsum, hsum));
 				const T final_res = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum), _mm_setzero_si128()));
+
 				dst[x] = clamp(final_res,val_min,val_max);
             }
             else
@@ -867,7 +869,6 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
                     {
 						const __m256 src_ps = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr + lx)), min_val);
 						const __m256 src_ps2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr + lx + src_pitch)), min_val);
-
 						__m256 coeff, coeff2;
 
 						if JincMT_CONSTEXPR (bFP16)
@@ -875,6 +876,7 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 							const int lx2 = lx >> 1;
 							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2));
 							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2 + coeff_stride));
+
 							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
 							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
 						}
@@ -901,6 +903,7 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					{
 						const __m256 src_ps = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr + lx)), min_val);
 						__m256 coeff;
+
 						if JincMT_CONSTEXPR (bFP16)
 							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx >> 1))));
 						else
@@ -911,6 +914,7 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 				}
 
                 __m128 hsum = _mm_add_ps(_mm256_castps256_ps128(result), _mm256_extractf128_ps(result, 1));
+
 				dst[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(hsum, hsum), _mm_hadd_ps(hsum, hsum)));
             }
 			meta++;
@@ -922,6 +926,9 @@ void resize_plane_avx2_1x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 
 
 template <typename T, bool bFP16>
+#if defined(CLANG)
+__attribute__((__target__("avx2")))
+#endif
 void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *tab_coeff,
 	const float Val_Min[], const float Val_Max[])
 {
@@ -983,7 +990,6 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 						const __m256 src_ps1_2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx + src_pitch1)))));
 						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
 						const __m256 src_ps2_2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx + src_pitch2)))));
-
 						__m256 coeff, coeff2;
 
 						if JincMT_CONSTEXPR (bFP16)
@@ -991,6 +997,7 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 							const int lx2 = lx >> 1;
 							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2));
 							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2 + coeff_stride));
+
 							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
 							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
 						}
@@ -1021,8 +1028,8 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					{
 						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
 						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
-
 						__m256 coeff;
+
 						if JincMT_CONSTEXPR (bFP16)
 							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx >> 1))));
 						else
@@ -1039,6 +1046,7 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 				hsum2 = _mm_hadd_ps(_mm_hadd_ps(hsum2, hsum2), _mm_hadd_ps(hsum2, hsum2));
 				const T final_res1 = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum1), _mm_setzero_si128()), _mm_setzero_si128()));
 				const T final_res2 = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum2), _mm_setzero_si128()), _mm_setzero_si128()));
+
 				dst1[x] = clamp(final_res1, val_min1, val_max1);
 				dst2[x] = clamp(final_res2, val_min2, val_max2);
 			}
@@ -1052,7 +1060,6 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 						const __m256 src_ps1_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx + src_pitch1)))));
 						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
 						const __m256 src_ps2_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx + src_pitch2)))));
-
 						__m256 coeff, coeff2;
 
 						if JincMT_CONSTEXPR (bFP16)
@@ -1060,6 +1067,7 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 							const int lx2 = lx >> 1;
 							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2));
 							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2 + coeff_stride));
+
 							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
 							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
 						}
@@ -1090,8 +1098,8 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					{
 						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
 						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
-
 						__m256 coeff;
+
 						if JincMT_CONSTEXPR (bFP16)
 							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx >> 1))));
 						else
@@ -1108,6 +1116,7 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 				hsum2 = _mm_hadd_ps(_mm_hadd_ps(hsum2, hsum2), _mm_hadd_ps(hsum2, hsum2));
 				const T final_res1 = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum1), _mm_setzero_si128()));
 				const T final_res2 = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum2), _mm_setzero_si128()));
+
 				dst1[x] = clamp(final_res1, val_min1, val_max1);
 				dst2[x] = clamp(final_res2, val_min2, val_max2);
 			}
@@ -1121,7 +1130,6 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 						const __m256 src_ps1_2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr1 + lx + src_pitch1)), min_val1);
 						const __m256 src_ps2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx)), min_val1);
 						const __m256 src_ps2_2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx + src_pitch2)), min_val2);
-
 						__m256 coeff, coeff2;
 
 						if JincMT_CONSTEXPR (bFP16)
@@ -1129,6 +1137,7 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 							const int lx2 = lx >> 1;
 							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2));
 							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2 + coeff_stride));
+
 							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
 							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
 						}
@@ -1159,8 +1168,8 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 					{
 						const __m256 src_ps1 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr1 + lx)), min_val1);
 						const __m256 src_ps2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx)), min_val2);
-
 						__m256 coeff;
+
 						if JincMT_CONSTEXPR (bFP16)
 							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx >> 1))));
 						else
@@ -1173,6 +1182,7 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 
 				__m128 hsum1 = _mm_add_ps(_mm256_castps256_ps128(result1), _mm256_extractf128_ps(result1, 1));
 				__m128 hsum2 = _mm_add_ps(_mm256_castps256_ps128(result2), _mm256_extractf128_ps(result2, 1));
+
 				dst1[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(hsum1, hsum1), _mm_hadd_ps(hsum1, hsum1)));
 				dst2[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(hsum2, hsum2), _mm_hadd_ps(hsum2, hsum2)));
 			}
@@ -1186,6 +1196,9 @@ void resize_plane_avx2_2x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 
 
 template <typename T, bool bFP16>
+#if defined(CLANG)
+__attribute__((__target__("avx2")))
+#endif
 void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *tab_coeff,
 	const float Val_Min[], const float Val_Max[])
 {
@@ -1261,7 +1274,6 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 						const __m256 src_ps2_2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx + src_pitch2)))));
 						const __m256 src_ps3 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx)))));
 						const __m256 src_ps3_2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx + src_pitch2)))));
-
 						__m256 coeff, coeff2;
 
 						if JincMT_CONSTEXPR (bFP16)
@@ -1269,6 +1281,7 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 							const int lx2 = lx >> 1;
 							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2));
 							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2 + coeff_stride));
+
 							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
 							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
 						}
@@ -1304,8 +1317,8 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
 						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
 						const __m256 src_ps3 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx)))));
-
 						__m256 coeff;
+
 						if JincMT_CONSTEXPR (bFP16)
 							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx >> 1))));
 						else
@@ -1326,6 +1339,7 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 				const T final_res1 = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum1), _mm_setzero_si128()), _mm_setzero_si128()));
 				const T final_res2 = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum2), _mm_setzero_si128()), _mm_setzero_si128()));
 				const T final_res3 = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum3), _mm_setzero_si128()), _mm_setzero_si128()));
+
 				dst1[x] = clamp(final_res1, val_min1, val_max1);
 				dst2[x] = clamp(final_res2, val_min2, val_max2);
 				dst3[x] = clamp(final_res3, val_min3, val_max3);
@@ -1342,7 +1356,6 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 						const __m256 src_ps2_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx + src_pitch2)))));
 						const __m256 src_ps3 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx)))));
 						const __m256 src_ps3_2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx + src_pitch2)))));
-
 						__m256 coeff, coeff2;
 
 						if JincMT_CONSTEXPR (bFP16)
@@ -1350,6 +1363,7 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 							const int lx2 = lx >> 1;
 							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2));
 							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2 + coeff_stride));
+
 							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
 							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
 						}
@@ -1385,8 +1399,8 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 						const __m256 src_ps1 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr1 + lx)))));
 						const __m256 src_ps2 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr2 + lx)))));
 						const __m256 src_ps3 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_loadu_si128(const_cast<__m128i*>(reinterpret_cast<const __m128i*>(src_ptr3 + lx)))));
-
 						__m256 coeff;
+
 						if JincMT_CONSTEXPR (bFP16)
 							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx >> 1))));
 						else
@@ -1407,6 +1421,7 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 				const T final_res1 = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum1), _mm_setzero_si128()));
 				const T final_res2 = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum2), _mm_setzero_si128()));
 				const T final_res3 = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum3), _mm_setzero_si128()));
+
 				dst1[x] = clamp(final_res1, val_min1, val_max1);
 				dst2[x] = clamp(final_res2, val_min2, val_max2);
 				dst3[x] = clamp(final_res3, val_min3, val_max3);
@@ -1423,7 +1438,6 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 						const __m256 src_ps2_2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx + src_pitch2)), min_val2);
 						const __m256 src_ps3 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr3 + lx)), min_val3);
 						const __m256 src_ps3_2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr3 + lx + src_pitch3)), min_val3);
-
 						__m256 coeff, coeff2;
 
 						if JincMT_CONSTEXPR (bFP16)
@@ -1431,6 +1445,7 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 							const int lx2 = lx >> 1;
 							__m128i coeff_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2));
 							__m128i coeff2_fp16 = _mm_load_si128((__m128i*)(coeff_ptr + lx2 + coeff_stride));
+
 							coeff = _mm256_cvtph_ps(coeff_fp16); // separated grouped converts may be better for instructions grouping at some compilers
 							coeff2 = _mm256_cvtph_ps(coeff2_fp16);
 						}
@@ -1466,8 +1481,8 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 						const __m256 src_ps1 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr1 + lx)), min_val1);
 						const __m256 src_ps2 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr2 + lx)), min_val2);
 						const __m256 src_ps3 = _mm256_max_ps(_mm256_loadu_ps(reinterpret_cast<const float*>(src_ptr3 + lx)), min_val3);
-
 						__m256 coeff;
+
 						if JincMT_CONSTEXPR (bFP16)
 							coeff = _mm256_cvtph_ps(_mm_load_si128((__m128i*)(coeff_ptr + (lx >> 1))));
 						else
@@ -1482,6 +1497,7 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 				__m128 hsum1 = _mm_add_ps(_mm256_castps256_ps128(result1), _mm256_extractf128_ps(result1, 1));
 				__m128 hsum2 = _mm_add_ps(_mm256_castps256_ps128(result2), _mm256_extractf128_ps(result2, 1));
 				__m128 hsum3 = _mm_add_ps(_mm256_castps256_ps128(result3), _mm256_extractf128_ps(result3, 1));
+
 				dst1[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(hsum1, hsum1), _mm_hadd_ps(hsum1, hsum1)));
 				dst2[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(hsum2, hsum2), _mm_hadd_ps(hsum2, hsum2)));
 				dst3[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(hsum3, hsum3), _mm_hadd_ps(hsum3, hsum3)));
@@ -1497,6 +1513,9 @@ void resize_plane_avx2_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 
 
 template <typename T, bool bFP16>
+#if defined(CLANG)
+__attribute__((__target__("avx2")))
+#endif
 void resize_plane_avx2_4x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *tab_coeff,
 	const float Val_Min[], const float Val_Max[])
 {
@@ -1602,6 +1621,7 @@ void resize_plane_avx2_4x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 				const T final_res2 = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum2), _mm_setzero_si128()), _mm_setzero_si128()));
 				const T final_res3 = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum3), _mm_setzero_si128()), _mm_setzero_si128()));
 				const T final_res4 = _mm_cvtsi128_si32(_mm_packus_epi16(_mm_packus_epi32(_mm_cvtps_epi32(hsum4), _mm_setzero_si128()), _mm_setzero_si128()));
+
 				dst1[x] = clamp(final_res1, val_min1, val_max1);
 				dst2[x] = clamp(final_res2, val_min2, val_max2);
 				dst3[x] = clamp(final_res3, val_min3, val_max3);
@@ -1649,6 +1669,7 @@ void resize_plane_avx2_4x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 				const T final_res2 = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum2), _mm_setzero_si128()));
 				const T final_res3 = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum3), _mm_setzero_si128()));
 				const T final_res4 = _mm_cvtsi128_si32(_mm_packus_epi32(_mm_cvtps_epi32(hsum4), _mm_setzero_si128()));
+
 				dst1[x] = clamp(final_res1, val_min1, val_max1);
 				dst2[x] = clamp(final_res2, val_min2, val_max2);
 				dst3[x] = clamp(final_res3, val_min3, val_max3);
@@ -1688,6 +1709,7 @@ void resize_plane_avx2_4x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool
 				__m128 hsum2 = _mm_add_ps(_mm256_castps256_ps128(result2), _mm256_extractf128_ps(result2, 1));
 				__m128 hsum3 = _mm_add_ps(_mm256_castps256_ps128(result3), _mm256_extractf128_ps(result3, 1));
 				__m128 hsum4 = _mm_add_ps(_mm256_castps256_ps128(result4), _mm256_extractf128_ps(result4, 1));
+
 				dst1[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(hsum1, hsum1), _mm_hadd_ps(hsum1, hsum1)));
 				dst2[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(hsum2, hsum2), _mm_hadd_ps(hsum2, hsum2)));
 				dst3[x] = _mm_cvtss_f32(_mm_hadd_ps(_mm_hadd_ps(hsum3, hsum3), _mm_hadd_ps(hsum3, hsum3)));

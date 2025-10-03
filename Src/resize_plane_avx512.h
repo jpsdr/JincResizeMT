@@ -49,5 +49,8 @@ void resize_plane_avx512_3x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bo
 template <typename T, bool bFP16>
 void resize_plane_avx512_4x(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *tab_coeff,
 	const float Val_Min[], const float Val_Max[]);
+template <typename T, bool bFP16>
+void resize_plane_avx2_4x_v2(const MT_Data_Info_JincResizeMT *MT_DataGF, const bool PlaneYMode, const EWAPixelCoeff *tab_coeff,
+	const float Val_Min[], const float Val_Max[]);
 
 #endif

@@ -1312,7 +1312,7 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 	float _k10, float _k20, float _k11, float _k21, float _support, bool _bUseFP16coeff,
 	int range, bool _sleep, bool negativePrefetch, IScriptEnvironment* env)
     : GenericVideoFilter(_child), init_lut(nullptr),has_at_least_v8(false), has_at_least_v11(false),
-	avx512(false), avx2(false), sse41(false), subsampled(false), threads (_threads), sleep(_sleep),
+	avx512(false), avx2(false), sse41(false), avx512_d(false), subsampled(false), threads (_threads), sleep(_sleep),
 	bUseLUTkernel(_bUseLUTkernel),kernel_type(_sp_kernel_type), k10(_k10), k20(_k20), k11(_k11), k21(_k21),
 	support(_support), bUseFP16coeff(false)
 {
@@ -1340,6 +1340,10 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 	isRGBPfamily = vi.IsPlanarRGB() || vi.IsPlanarRGBA();
 	isAlphaChannel = vi.IsYUVA() || vi.IsPlanarRGBA();
 	bits_per_pixel = (uint8_t)vi.BitsPerComponent();
+
+#ifdef AVX2_BUILD_POSSIBLE
+	bUseFP16coeff = _bUseFP16coeff;
+#endif
 
     if (!vi.IsPlanar())
         env->ThrowError("JincResizeMT: clip must be in planar format.");
@@ -1462,10 +1466,10 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 #ifdef AVX512_BUILD_POSSIBLE
 	//avx512 = ((!!(env->GetCPUFlags() & CPUF_AVX512F)) && (opt < 0)) || (opt == 3);
 	avx512 = (opt == 3);
+	avx512_d = !!(env->GetCPUFlags() & CPUF_AVX512F);
 #endif
 #ifdef AVX2_BUILD_POSSIBLE
 	avx2 = ((!!(env->GetCPUFlags() & CPUF_AVX2)) && (opt < 0)) || (opt == 2) || avx512;
-	bUseFP16coeff = _bUseFP16coeff;
 #endif
 	sse41 = ((!!(env->GetCPUFlags() & CPUF_SSE4_1)) && (opt < 0)) || (opt == 1) || avx2 || avx512;
 
@@ -1741,14 +1745,28 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 					process_frame_1x = resize_plane_avx2_1x<uint8_t, true>;
 					process_frame_2x = resize_plane_avx2_2x<uint8_t, true>;
 					process_frame_3x = resize_plane_avx2_3x<uint8_t, true>;
-					process_frame_4x = resize_plane_avx2_4x<uint8_t, true>;
+#ifdef AVX512_BUILD_POSSIBLE
+					if (avx512_d)
+						process_frame_4x = resize_plane_avx2_4x_v2<uint8_t, true>;
+					else
+#endif
+					{
+						process_frame_4x = resize_plane_avx2_4x<uint8_t, true>;
+					}
 				}
 				else
 				{
 					process_frame_1x = resize_plane_avx2_1x<uint8_t, false>;
 					process_frame_2x = resize_plane_avx2_2x<uint8_t, false>;
 					process_frame_3x = resize_plane_avx2_3x<uint8_t, false>;
-					process_frame_4x = resize_plane_avx2_4x<uint8_t, false>;
+#ifdef AVX512_BUILD_POSSIBLE
+					if (avx512_d)
+						process_frame_4x = resize_plane_avx2_4x_v2<uint8_t, false>;
+					else
+#endif
+					{
+						process_frame_4x = resize_plane_avx2_4x<uint8_t, false>;
+					}
 				}
 			}
 			else
@@ -1802,14 +1820,28 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 					process_frame_1x = resize_plane_avx2_1x<uint16_t, true>;
 					process_frame_2x = resize_plane_avx2_2x<uint16_t, true>;
 					process_frame_3x = resize_plane_avx2_3x<uint16_t, true>;
-					process_frame_4x = resize_plane_avx2_4x<uint16_t, true>;
+#ifdef AVX512_BUILD_POSSIBLE
+					if (avx512_d)
+						process_frame_4x = resize_plane_avx2_4x_v2<uint16_t, true>;
+					else
+#endif
+					{
+						process_frame_4x = resize_plane_avx2_4x<uint16_t, true>;
+					}
 				}
 				else
 				{
 					process_frame_1x = resize_plane_avx2_1x<uint16_t, false>;
 					process_frame_2x = resize_plane_avx2_2x<uint16_t, false>;
 					process_frame_3x = resize_plane_avx2_3x<uint16_t, false>;
-					process_frame_4x = resize_plane_avx2_4x<uint16_t, false>;
+#ifdef AVX512_BUILD_POSSIBLE
+					if (avx512_d)
+						process_frame_4x = resize_plane_avx2_4x_v2<uint16_t, false>;
+					else
+#endif
+					{
+						process_frame_4x = resize_plane_avx2_4x<uint16_t, false>;
+					}
 				}
 			}
 			else
@@ -1863,14 +1895,28 @@ JincResizeMT::JincResizeMT(PClip _child, int target_width, int target_height, do
 					process_frame_1x = resize_plane_avx2_1x<float, true>;
 					process_frame_2x = resize_plane_avx2_2x<float, true>;
 					process_frame_3x = resize_plane_avx2_3x<float, true>;
-					process_frame_4x = resize_plane_avx2_4x<float, true>;
+#ifdef AVX512_BUILD_POSSIBLE
+					if (avx512_d)
+						process_frame_4x = resize_plane_avx2_4x_v2<float, true>;
+					else
+#endif
+					{
+						process_frame_4x = resize_plane_avx2_4x<float, true>;
+					}
 				}
 				else
 				{
 					process_frame_1x = resize_plane_avx2_1x<float, false>;
 					process_frame_2x = resize_plane_avx2_2x<float, false>;
 					process_frame_3x = resize_plane_avx2_3x<float, false>;
-					process_frame_4x = resize_plane_avx2_4x<float, false>;
+#ifdef AVX512_BUILD_POSSIBLE
+					if (avx512_d)
+						process_frame_4x = resize_plane_avx2_4x_v2<float, false>;
+					else
+#endif
+					{
+						process_frame_4x = resize_plane_avx2_4x<float, false>;
+					}
 				}
 			}
 			else
