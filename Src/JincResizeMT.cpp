@@ -1298,6 +1298,15 @@ void JincResizeMT::FreeData(void)
 			mydelete(out[i]);
 		}
 	}
+
+	for (int i=0; i<static_cast<int>(out_fp16.size()); ++i)
+	{
+		if (out_fp16[i] != nullptr)
+		{
+			delete_coeff_table(out_fp16[i]);
+			mydelete(out_fp16[i]);
+		}
+	}
 	
 	if (init_lut!=nullptr)
 	{
