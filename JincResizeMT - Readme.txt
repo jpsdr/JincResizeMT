@@ -134,32 +134,7 @@ UserDefined4ResizeSPMT is more tuned for downscaling.
 
       Default: 0
 
-   k10 (UserDefined4ResizeSPMT only) -
-      Weighting coefficient.
-
-      Default: 100.0
-
-   k20 (UserDefined4ResizeSPMT only) -
-      Weighting coefficient.
-
-      Default: 0.0
-
-   k11 (UserDefined4ResizeSPMT only) -
-      Weighting coefficient.
-
-      Default: 60.0
-
-   k21 (UserDefined4ResizeSPMT only) -
-      Weighting coefficient.
-
-      Default: -10.0
-
-   s (UserDefined4ResizeSPMT only) -
-      Support.
-
-      Default: 3.0
-
-   opt (JincResizeMT only) -
+   opt (JincResizeMT, UserDefined4ResizeSPMT only) -
       Sets which cpu optimizations to use.
       -1: Auto-detect without AVX-512.
       0: Use C++ code.
@@ -168,6 +143,31 @@ UserDefined4ResizeSPMT is more tuned for downscaling.
       3: Use AVX-512 code.
 
       Default: -1
+
+   k10 (UserDefined4ResizeSPMT only) -
+      Weighting coefficient.
+
+      Default: 97.0
+
+   k20 (UserDefined4ResizeSPMT only) -
+      Weighting coefficient.
+
+      Default: -2.0
+
+   k11 (UserDefined4ResizeSPMT only) -
+      Weighting coefficient.
+
+      Default: 35.0
+
+   k21 (UserDefined4ResizeSPMT only) -
+      Weighting coefficient.
+
+      Default: -1.0
+
+   s (UserDefined4ResizeSPMT only) -
+      Support.
+
+      Default: 3.0
 
    initial_capacity (JincResizeMT only) -
       Initial memory allocation size.

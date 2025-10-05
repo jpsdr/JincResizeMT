@@ -2377,18 +2377,18 @@ AVSValue __cdecl Create_UserDefined4(AVSValue args, void* user_data, IScriptEnvi
 	const VideoInfo& vi = args[0].AsClip()->GetVideoInfo();
 
 	const int threads = args[10].AsInt(0);
-	const bool LogicalCores = args[18].AsBool(true);
-	const bool MaxPhysCores = args[19].AsBool(true);
-	const bool SetAffinity = args[20].AsBool(false);
-	const bool sleep = args[21].AsBool(false);
-	int prefetch = args[22].AsInt(0);
-	int thread_level = args[23].AsInt(6);
+	const bool LogicalCores = args[19].AsBool(true);
+	const bool MaxPhysCores = args[20].AsBool(true);
+	const bool SetAffinity = args[21].AsBool(false);
+	const bool sleep = args[22].AsBool(false);
+	int prefetch = args[23].AsInt(0);
+	int thread_level = args[24].AsInt(6);
 	
-	float k10 = (float)args[11].AsFloat(100.0f); // set to some working defaults (about close to UserDefined2Resize b=80 c=-20)
-	float k20 = (float)args[12].AsFloat(0.0f);
-	float k11 = (float)args[13].AsFloat(60.0f);
-	float k21 = (float)args[14].AsFloat(-10.0f);
-	float support = (float)args[15].AsFloat(3.0f); 
+	float k10 = (float)args[12].AsFloat(97.0f); // set to some working defaults (about close to UserDefined2Resize b=80 c=-20)
+	float k20 = (float)args[13].AsFloat(-2.0f);
+	float k11 = (float)args[14].AsFloat(35.0f);
+	float k21 = (float)args[15].AsFloat(-1.0f);
+	float support = (float)args[16].AsFloat(3.0f); 
 	// convert to 0..1 range
 	k10 = (k10-16.0f)/219.0f;
 	k20 = (k20-16.0f)/219.0f;
@@ -2472,7 +2472,7 @@ AVSValue __cdecl Create_UserDefined4(AVSValue args, void* user_data, IScriptEnvi
 		1.0, // blur
 		args[9].AsString("auto"), // cplace
 		threads_number, // threads
-		-1, // opt
+		args[11].AsInt(-1), // opt
 		0, // initial_capacity
 		false, // initial_capacity is defined
 		1.5, // initial_factor
@@ -2484,8 +2484,8 @@ AVSValue __cdecl Create_UserDefined4(AVSValue args, void* user_data, IScriptEnvi
 		k11,
 		k21,
 		support,
-		args[16].AsBool(false), // FP16
-		args[17].AsInt(1), // range
+		args[17].AsBool(false), // FP16
+		args[18].AsInt(1), // range
 		sleep,
 		negativePrefetch,
 		env);
@@ -2518,7 +2518,7 @@ extern "C" __declspec(dllexport) const char* __stdcall AvisynthPluginInit3(IScri
 		"[range]i[logicalCores]b[MaxPhysCore]b[SetAffinity]b[sleep]b[prefetch]i[ThreadLevel]i", Create_JincResizeTaps<8>, 0);
 
 	env->AddFunction("UserDefined4ResizeSPMT", "c[target_width]i[target_height]i[src_left]f[src_top]f[src_width]f[src_height]f[quant_x]i[quant_y]i" \
-		"[cplace]s[threads]i[k10]f[k20]f[k11]f[k21]f[s]f[FP16]b" \
+		"[cplace]s[threads]i[opt]i[k10]f[k20]f[k11]f[k21]f[s]f[FP16]b" \
 		"[range]i[logicalCores]b[MaxPhysCore]b[SetAffinity]b[sleep]b[prefetch]i[ThreadLevel]i", Create_UserDefined4, 0);
 
 
