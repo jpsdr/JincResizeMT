@@ -43,6 +43,7 @@
 // VS 2017 v15.3
 #if _MSC_VER >= 1911
 #define C17_ENABLE
+#define C17_MATH_ENABLE
 #endif
 
 #define myalignedfree(ptr) if (ptr!=nullptr) { _aligned_free(ptr); ptr=nullptr;}
@@ -242,7 +243,7 @@ static double jinc_sqr_boost_l(double x2)
 	return ((sqrt(xp / M_PI)*2.0 / y2)*(evaluate_rational(bPC, bQC, y2p, 7)*(sx - cx) + (8.0 / xp)*evaluate_rational(bPS, bQS, y2p, 7)*(sx + cx)));
 }
 
-#ifndef C17_ENABLE
+#ifndef C17_MATH_ENABLE
 #define MAX_TERMS 50
 static double bessel_j1(double x)
 {
@@ -313,7 +314,7 @@ static double jinc_sqr(double x2)
 	else if (x2 < 52.57)  // the 5~7-tap radius
 	{
 		const double x = M_PI * sqrt(x2);
-#ifdef C17_ENABLE
+#ifdef C17_MATH_ENABLE
 		return(2.0*std::cyl_bessel_j(1, x) / x);
 #else
 		return(2.0*bessel_j1(x) / x);
@@ -327,7 +328,7 @@ static double jinc_sqr(double x2)
 	{
 		const double x = M_PI * sqrt(x2);
 
-#ifdef C17_ENABLE
+#ifdef C17_MATH_ENABLE
 		return(2.0*std::cyl_bessel_j(1, x) / x);
 #else
 		return(2.0*bessel_j1(x) / x);
