@@ -32,9 +32,6 @@
 // which is not derived from or based on Avisynth, such as 3rd-party filters,
 // import and export plugins, or graphical user interfaces.
 
-#include <cmath>
-#include "avs/minmax.h"
-
 // VS 2013
 #if _MSC_VER >= 1800
 #define AVX2_BUILD_POSSIBLE
@@ -46,6 +43,11 @@
 #define C17_ENABLE
 #define C17_MATH_ENABLE
 #endif
+
+#ifdef C17_MATH_ENABLE
+#include <cmath>
+#endif
+#include "avs/minmax.h"
 
 #include "JincResizeMT.h"
 #include "resize_plane_sse41.h"
@@ -299,11 +301,11 @@ static double bessel_j1(double x)
     const double EPS = 1e-15;
 	double TabD[MAX_TERMS];
 
-    double term = x/2.0; // first value m=0
+    double term = x*0.5; // first value m=0, x/2
 
 	TabD[0] = term;
 
-    double x2 = (x*x)/4.0;
+    double x2 = (x*x)*0.25;
 
     unsigned long m=1;
 	while ((std::fabs(term) >= EPS) && (m<MAX_TERMS))
@@ -312,9 +314,9 @@ static double bessel_j1(double x)
 		TabD[m++] = term;
 	}
 
-	double sum = 0.0;
+	double sum = TabD[m-1];
 
-	for (int i=m-1; i>=0; i--)
+	for (int i=((int)m)-2; i>=0; i--)
 		sum += TabD[i];
 	
     return sum;

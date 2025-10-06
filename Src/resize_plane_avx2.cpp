@@ -35,16 +35,18 @@
 // VS 2013
 #if _MSC_VER >= 1800
 
-#include <cmath>
-#include <immintrin.h>
-#include "avs/minmax.h"
-#include "JincResizeMT.h"
-
 // VS 2017 v15.3
 #if _MSC_VER >= 1911
 #define C17_ENABLE
 #define C17_MATH_ENABLE
 #endif
+
+#ifdef C17_MATH_ENABLE
+#include <cmath>
+#endif
+#include <immintrin.h>
+#include "avs/minmax.h"
+#include "JincResizeMT.h"
 
 #define myalignedfree(ptr) if (ptr!=nullptr) { _aligned_free(ptr); ptr=nullptr;}
 
@@ -247,28 +249,28 @@ static double jinc_sqr_boost_l(double x2)
 #define MAX_TERMS 50
 static double bessel_j1(double x)
 {
-	const double EPS = 1e-15;
+    const double EPS = 1e-15;
 	double TabD[MAX_TERMS];
 
-	double term = x / 2.0; // first value m=0
+    double term = x*0.5; // first value m=0, x/2
 
 	TabD[0] = term;
 
-	double x2 = (x*x) / 4.0;
+    double x2 = (x*x)*0.25;
 
-	unsigned long m = 1;
-	while ((std::fabs(term) >= EPS) && (m < MAX_TERMS))
+    unsigned long m=1;
+	while ((std::fabs(term) >= EPS) && (m<MAX_TERMS))
 	{
-		term *= -x2 / (m*(m + 1)); // recurrence
+		term *= -x2/(m*(m+1)); // recurrence
 		TabD[m++] = term;
 	}
 
-	double sum = 0.0;
+	double sum = TabD[m-1];
 
-	for (int i = m - 1; i >= 0; i--)
+	for (int i=((int)m)-2; i>=0; i--)
 		sum += TabD[i];
-
-	return sum;
+	
+    return sum;
 }
 #endif
 

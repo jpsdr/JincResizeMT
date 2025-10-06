@@ -37,7 +37,6 @@
 
 #include <stdint.h>
 #include <vector>
-#include <immintrin.h>
 
 #include "avisynth.h"
 #include "ThreadPoolInterface.h"
@@ -94,14 +93,14 @@ typedef struct _MT_Data_Info_JincResizeMT
 	bool top, bottom;
 } MT_Data_Info_JincResizeMT;
 
-struct EWAPixelCoeffMeta
+typedef struct _EWAPixelCoeffMeta
 {
     int start_x;
     int start_y;
     int coeff_meta;
-};
+} EWAPixelCoeffMeta;
 
-struct EWAPixelCoeff
+typedef struct _EWAPixelCoeff
 {
     float *factor;
     EWAPixelCoeffMeta *meta;
@@ -109,8 +108,8 @@ struct EWAPixelCoeff
     int filter_size;
     int coeff_stride;
 	
-	EWAPixelCoeff() : factor(nullptr), meta(nullptr), factor_map(nullptr) {}
-};
+	_EWAPixelCoeff() : factor(nullptr), meta(nullptr), factor_map(nullptr) {}
+} EWAPixelCoeff;
 
 #define LUT_SIZE_VALUE 1024
 
