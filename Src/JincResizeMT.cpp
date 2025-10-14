@@ -494,7 +494,7 @@ inline static double jinc_pi(double arg)
 	}
 	else
 	{
-#ifdef C17_ENABLE
+#ifdef C17_MATH_ENABLE
 		return(std::cyl_bessel_j(1,arg)/arg);
 #else
 		return(bessel_j1(arg)/arg);
