@@ -11,7 +11,7 @@ Several new parameters are added at the end of all the parameters.
 
 JincResizeMT(clip, int target_width, int target_height, float src_left, float src_top, float src_width,
   float src_height, int quant_x, int quant_y, int tap, float blur, string cplace, int threads,
-  int opt, int initial_capacity, float initial_factor,
+  int opt, int initial_capacity, float initial_factor, int wt, bool lutkernel, bool FP16,
   int range, bool logicalCores, bool MaxPhysCore, bool SetAffinity, bool sleep, int prefetch, int ThreadLevel)
 )
 
@@ -25,14 +25,14 @@ JincResizeMT(clip, int target_width, int target_height, float src_left, float sr
 
 Jinc36ResizeMT/Jinc64ResizeMT/Jinc144ResizeMT/Jinc256ResizeMT(clip, int target_width, int target_height,
   float src_left, float src_top, float src_width, float src_height, int quant_x, int quant_y,
-  string cplace, int threads,
+  string cplace, int threads, int wt, bool lutkernel,
   int range, bool logicalCores, bool MaxPhysCore, bool SetAffinity, bool sleep, int prefetch, int ThreadLevel)
 
 ------------------------------
 
 UserDefined4ResizeSPMT(clip, int target_width, int target_height,
   float src_left, float src_top, float src_width, float src_height, int quant_x, int quant_y,
-  string cplace, int threads,float k10, float k20, float k11, float k21, float s,
+  string cplace, int threads,float k10, float k20, float k11, float k21, float s, bool FP16,
   int range, bool logicalCores, bool MaxPhysCore, bool SetAffinity, bool sleep, int prefetch, int ThreadLevel)
 
 Weighting coefficients of the 5x5 2D kernel based on jinc function with skipped corners (marked XX).
@@ -184,6 +184,24 @@ UserDefined4ResizeSPMT is more tuned for downscaling.
       Must be equal to or greater than 1.0.
 
       Default: 1.5
+
+   wt (not in UserDefined4ResizeSPMT) -
+      Weight type computation [0..2] :
+        0 : SP_WT_NONE
+        1 : SP_WT_JINC
+        2 : SP_WT_TRD2
+
+      Default: 1
+
+   lutkernel (not in UserDefined4ResizeSPMT) -
+      Use internal lut kernel.
+
+      Default: true
+
+   FP16 (JincResizeMT, UserDefined4ResizeSPMT only) -
+      Use FP16 (needs FP16C and AVX2 CPU).
+
+      Default: false
 
   range -
       This parameter specify the range the output video data has to comply with.
